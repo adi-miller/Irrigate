@@ -16,18 +16,23 @@ class Config:
         self.logger.exception(ex)
         print(ex)
 
-    self.mqttEnabled = self.cfg['mqtt']['enabled']
-    self.mqttClientName = self.cfg['mqtt']['clientname']
-    self.mqttHostName = self.cfg['mqtt']['hostname']
-    self.valvesConcurrency = self.cfg['general']['valvesConcurrency']
-    self.timezone = self.cfg['general']['timezone']
-    self.latitude = self.cfg['general']['latitude']
-    self.longitude = self.cfg['general']['longitude']
+    try:
+      self.mqttEnabled = self.cfg['mqtt']['enabled']
+      self.mqttClientName = self.cfg['mqtt']['clientname']
+      self.mqttHostName = self.cfg['mqtt']['hostname']
+      self.valvesConcurrency = self.cfg['general']['valvesConcurrency']
+      self.timezone = self.cfg['general']['timezone']
+      self.latitude = self.cfg['general']['latitude']
+      self.longitude = self.cfg['general']['longitude']
+      self.telemetry = self.cfg['telemetry']['enabled']
+      self.telemetryInterval = self.cfg['telemetry']['idleinterval']
+    except KeyError as ex:
+      logger.error("Mandatory configuration value '%s' missing." % format(ex))
+      raise
 
     self.sensors = self.initSensors()
     self.schedules = self.initSchedules()
     self.valves = self.initValves(self.schedules)
-
 
   def getLatLon(self):
     return self.latitude, self.longitude

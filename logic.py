@@ -1,6 +1,6 @@
 import sys
 import time
-import mqtt
+from mqtt import Mqtt
 import pytz
 import model
 import queue
@@ -15,22 +15,25 @@ from suntime import Sun
 def main(argv):
   configFilename = "config.yaml"
   irrigate = Irrigate(configFilename)
-  irrigate.start()
+  irrigate.start(False)
 
 class Irrigate:
   def __init__(self, configFilename):
     self.init(configFilename)
     self.logger.info("Configuration '%s' loaded." % configFilename)
 
+    self.mqtt = Mqtt(self)
     if self.cfg.mqttEnabled:
       self.logger.info("MQTT initialzing...")
-      mqtt.initMqtt(self.cfg, self.logger, self.q, self.queueJob)
+      self.mqtt.start()
 
-    self.initThreads(False)
+    self.initThreads()
 
   def start(self, aAsync = True):
     self.logger.info("Starting scheduler thread '%s'." % self.sched.getName())
     self.sched.start()
+    self.logger.info("Starting telemetry thread '%s'." % self.telemetry.getName())
+    self.telemetry.start()
     if not aAsync:
       self.sched.join()
       self.logger.info("Scheduler thread exited. Terminating Irrigate!")
@@ -38,12 +41,10 @@ class Irrigate:
   def init(self, cfgFilename):
     self.logger = self.getLogger()
     self.cfg = config.Config(self.logger, cfgFilename)
-    lat, lon = self.cfg.getLatLon()
-    self.initSun(lat, lon)
     self.valves = self.cfg.valves
     self.q = queue.Queue()
 
-  def initThreads(self, startSched):
+  def initThreads(self):
     for i in range(self.cfg.valvesConcurrency):
       worker = Thread(target=self.irrigationHandler, args=())
       worker.setDaemon(True)
@@ -53,12 +54,11 @@ class Irrigate:
     self.sched = Thread(target=self.schedulerThread, args=())
     self.sched.setDaemon(True)
     self.sched.setName("SchedTh")
-    if startSched:
-      self.sched.start()
 
-  def initSun(self, lat, lon):
-    self.sun = Sun(lat, lon)
-
+    if self.cfg.telemetry:
+      self.telemetry = Thread(target=self.telemetryHander, args=())
+      self.telemetry.setDaemon(True)
+      self.telemetry.setName("TelemTh")
 
   def evalSched(self, sched, timezone):
     todayStr = calendar.day_name[datetime.today().weekday()]
@@ -70,10 +70,12 @@ class Irrigate:
         if sched.type == 'absolute':
           startTime = startTime.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
         else:
+          lat, lon = self.cfg.getLatLon()
+          sun = Sun(lat, lon)
           if sched.type == 'sunrise':
-            startTime = self.sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
+            startTime = sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
           elif sched.type == 'sunset':
-            startTime = self.sun.get_local_sunset_time().replace(tzinfo=pytz.timezone(timezone))
+            startTime = sun.get_local_sunset_time().replace(tzinfo=pytz.timezone(timezone))
 
         if hours[0] == '+':
           hours = hours[1:]
@@ -163,6 +165,23 @@ class Irrigate:
                 job = model.Job(valve = aValve, sched = valveSched)
                 self.queueJob(job)
       time.sleep(60)
+
+  def telemetryHander(self):
+    while True:
+      # self.mqtt.publish("uptime", 0)
+      for valve in self.valves:
+        statusStr = "enabled"
+        if not self.cfg.valves[valve].enabled:
+          statusStr = "disabled"
+        elif self.cfg.valves[valve].suspended:
+          statusStr = "suspended"
+        elif self.cfg.valves[valve].open:
+          statusStr = "open"
+        try:
+          self.mqtt.publish(valve+"/status", statusStr)
+        except Exception as ex:
+          print(format(ex))
+      time.sleep(self.cfg.telemetryInterval)
 
   def getLogger(self):
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',

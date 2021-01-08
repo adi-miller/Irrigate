@@ -3,85 +3,86 @@ import threading
 from paho.mqtt import client 
 from paho.mqtt import subscribe 
 import time
-class MyUserData:
-  logger = None
-  q = None
-  valves = None
-  queueJob = None
 
-  def __init__(self, logger, q, valves, queueJob):
-    self.logger = logger
-    self.q = q
-    self.valves = valves
-    self.queueJob = queueJob
+class Mqtt:
+  def __init__(self, irrigate):
+    self.logger = irrigate.logger
+    self.cfg = irrigate.cfg
+    self.valves = irrigate.valves
+    self.irrigate = irrigate
 
-def initMqtt(cfg, logger, q, queueJob):
-  myUserData = MyUserData(logger, q, cfg.valves, queueJob)
+  def start(self):
+    self.logger.info("Connecting to MQTT service '%s'..." % self.cfg.mqttHostName)
+    self.mqttClient = self.getMyMqtt()
 
-  logger.info("Connecting to MQTT service '%s'..." % cfg.mqttHostName)
-  mqttClient = getMyMqtt(cfg, myUserData)
+    topicPrefix = str(self.cfg.mqttClientName) + "/"
+    self.mqttClient.subscribe(topicPrefix + "open/+/command")
+    self.mqttClient.subscribe(topicPrefix + "suspend/+/command")
+    self.mqttClient.subscribe(topicPrefix + "enabled/+/command")
+    self.registerTopics(topicPrefix, "open")
+    self.mqttClient.on_message = self.on_message
 
-  topicPrefix = str(cfg.mqttClientName) + "/"
-  mqttClient.subscribe(topicPrefix + "open/+/command")
-  mqttClient.subscribe(topicPrefix + "suspend/+/command")
-  mqttClient.subscribe(topicPrefix + "enabled/+/command")
-  mqttClient.on_message = on_message
+    worker = threading.Thread(target=self.mqttLooper, args=())
+    worker.setDaemon(True)
+    worker.start()
+    self.logger.info("MQTT thread '%s' started." % worker.getName())
+    while not self.mqttClient.is_connected():
+      self.logger.info("Waiting for MQTT connection...")
+      time.sleep(1)
 
-  worker = threading.Thread(target=mqttLooper, args=(mqttClient, logger))
-  worker.setDaemon(True)
-  worker.start()
-  logger.info("MQTT thread '%s' started." % worker.getName())
-  while not mqttClient.is_connected():
-    logger.info("Waiting for MQTT connection...")
-    time.sleep(1)
+    self.logger.info("MQTT connected: %s" % self.mqttClient.is_connected())
 
-  logger.info("MQTT connected: %s" % mqttClient.is_connected())
+  def registerTopics(self, topicPrefix, topic):
+    topicStr = topicPrefix + topic + "/+/command"
+    self.mqttClient.subscribe(topicStr)
+    self.logger.info("Topic '%s' registered." % topicStr)
 
+  def getMyMqtt(self):
+    mqttClient = client.Client(self.cfg.mqttClientName)
+    mqttClient.user_data_set(self)
+    mqttClient.on_connect = self.on_connect
+    mqttClient.connect(self.cfg.mqttHostName)
+    return mqttClient
 
-def getMyMqtt(cfg, myUserData):
-  mqttClient = client.Client(cfg.mqttClientName)
-  mqttClient.user_data_set(myUserData)
-  mqttClient.on_connect = on_connect
-  mqttClient.connect(cfg.mqttHostName)
-  return mqttClient
+  def mqttLooper(self):
+    self.logger.info("MQTT thread started...")
+    self.mqttClient.loop_forever(retry_first_connection=False)
+    self.logger.error("MQTT thread loop exited")
 
-def mqttLooper(mqttClient, logger):
-  logger.info("MQTT thread started...")
-  mqttClient.loop_forever(retry_first_connection=False)
-  logger.error("MQTT thread loop exited")
-
-def on_connect(client, userdata, flags, rc):
-  logger = userdata.logger
-  if rc == 0:
-    logger.info("Connected to MQTT Broker.")
-  else:
-    logger.error("Failed to connect, return code %d\n" % (rc))
-
-def on_message(client, userdata, msg):
-  logger = userdata.logger
-  logger.debug("Received message: " + str(msg.topic))
-  q = userdata.q
-  valves = userdata.valves
-
-  processMessages(logger, valves, q, userdata.queueJob, msg.topic, msg.payload)
-
-def processMessages(logger, valves, q, queueJob, topic, payload):
-  topicParts = topic.split("/")
-  valveName = topicParts[2]
-
-  if topicParts[1] == "open":
-    queueJob(model.Job(valve = valves[valveName], duration = int(payload)))
-  if topicParts[1] == "suspend":
-    if int(payload) == 0:
-      valves[valveName].suspended = False
-    elif int(payload) == 1:
-      valves[valveName].suspended = True
+  def on_connect(self, client, userdata, flags, rc):
+    if rc == 0:
+      self.logger.info("Connected to MQTT Broker.")
     else:
-      logger.warning("Invalid payload received in topic %s = '%s'" % (topic, payload))
-  if topicParts[1] == "enabled":
-    if int(payload) == 0:
-      valves[valveName].enabled = False
-    elif int(payload) == 1:
-      valves[valveName].enabled = True
-    else:
-      logger.warning("Invalid payload received in topic %s = '%s'" % (topic, payload))
+      self.logger.error("Failed to connect, return code %d\n" % (rc))
+
+  def on_message(self, client, userdata, msg):
+    self.logger.debug("Received message: " + str(msg.topic))
+    self.processMessages(msg.topic, msg.payload)
+
+  def publish(self, topic, payload):
+    topicPrefix = str(self.cfg.mqttClientName) + "/raspi/"
+    self.mqttClient.publish(topicPrefix + topic, payload)
+    self.logger.debug("Telemetry: %s: '%s'" % (topicPrefix + topic, payload))
+
+  def processMessages(self, topic, payload):
+    topicParts = topic.split("/")
+    valveName = topicParts[2]
+
+    valves = self.valves
+
+    if topicParts[1] == "open":
+      self.irrigate.queueJob(model.Job(valve = valves[valveName], duration = int(payload)))
+    if topicParts[1] == "suspend":
+      if int(payload) == 0:
+        valves[valveName].suspended = False
+      elif int(payload) == 1:
+        valves[valveName].suspended = True
+      else:
+        self.logger.warning("Invalid payload received in topic %s = '%s'" % (topic, payload))
+    if topicParts[1] == "enabled":
+      if int(payload) == 0:
+        valves[valveName].enabled = False
+      elif int(payload) == 1:
+        valves[valveName].enabled = True
+      else:
+        self.logger.warning("Invalid payload received in topic %s = '%s'" % (topic, payload))

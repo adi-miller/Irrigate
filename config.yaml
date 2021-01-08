@@ -10,6 +10,12 @@ mqtt:
   hostname: dockerpi
   clientname: irrigationPi
 
+telemetry:
+  enabled: true
+  endpoints:
+    - mqtt
+  idleinterval: 10
+
 schedules:
   # type: absolute, sunrise, sunset
   # start:
