@@ -178,7 +178,8 @@ class Irrigate:
         elif self.cfg.valves[valve].open:
           statusStr = "open"
         try:
-          self.mqtt.publish(valve+"/status", statusStr)
+          if self.cfg.mqttEnabled:
+            self.mqtt.publish(valve+"/status", statusStr)
         except Exception as ex:
           print(format(ex))
       time.sleep(self.cfg.telemetryInterval)
