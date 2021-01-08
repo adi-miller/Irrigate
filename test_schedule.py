@@ -1,7 +1,7 @@
 import time
+from test_base import init
 from test_base import assertValves
 from test_base import setStartTimeToNow
-from test_base import init
 
 def test_schedSimple():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")

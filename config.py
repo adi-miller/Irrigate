@@ -1,8 +1,4 @@
 import yaml
-import datetime
-from datetime import datetime, timedelta
-import calendar
-import pytz
 import model
 from sensors import sensorFactory
 

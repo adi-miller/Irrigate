@@ -1,8 +1,7 @@
+import time
 import model
 import threading 
 from paho.mqtt import client 
-from paho.mqtt import subscribe 
-import time
 
 class Mqtt:
   def __init__(self, irrigate):

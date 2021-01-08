@@ -1,16 +1,16 @@
 import sys
 import time
-from mqtt import Mqtt
 import pytz
 import model
 import queue
 import config
 import logging
+import calendar
+from mqtt import Mqtt
+from suntime import Sun
 from datetime import datetime
 from datetime import timedelta
-import calendar
 from threading import Thread
-from suntime import Sun
 
 def main(argv):
   configFilename = "config.yaml"
@@ -168,7 +168,7 @@ class Irrigate:
 
   def telemetryHander(self):
     while True:
-      # self.mqtt.publish("uptime", 0)
+      self.mqtt.publish(self.cfg.mqttClientName + "/svc/uptime", 0)
       for valve in self.valves:
         statusStr = "enabled"
         if not self.cfg.valves[valve].enabled:
@@ -177,12 +177,11 @@ class Irrigate:
           statusStr = "suspended"
         elif self.cfg.valves[valve].open:
           statusStr = "open"
-        try:
-          if self.cfg.mqttEnabled:
-            self.mqtt.publish(valve+"/status", statusStr)
-        except Exception as ex:
-          print(format(ex))
-      time.sleep(self.cfg.telemetryInterval)
+        if self.cfg.mqttEnabled:
+          self.mqtt.publish(valve+"/status", statusStr)
+          self.mqtt.publish(valve+"/duration", self.cfg.valves[valve].openSeconds)
+          
+      time.sleep(self.cfg.telemetryInterval * 60)
 
   def getLogger(self):
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',

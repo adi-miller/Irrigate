@@ -1,7 +1,6 @@
 import time
-from test_base import assertValves
-from test_base import setStartTimeToNow
 from test_base import init
+from test_base import assertValves
 
 def test_sh_mqttOpen():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")

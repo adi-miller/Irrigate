@@ -1,8 +1,8 @@
-from suntime import Sun
 import pytz
 import time
-from logic import Irrigate 
 import datetime
+from logic import Irrigate 
+from suntime import Sun
 
 def assertValves(valves, valveNames, status):
   ord = 0
