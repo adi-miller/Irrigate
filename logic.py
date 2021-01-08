@@ -14,14 +14,22 @@ from threading import Thread
 
 def main(argv):
   configFilename = "config.yaml"
+  if len(argv) > 1:
+    configFilename = argv[1]
   irrigate = Irrigate(configFilename)
-  irrigate.start(False)
+  irrigate.start()
+  try:
+    while True:
+      time.sleep(1)
+  except KeyboardInterrupt:
+    irrigate.logger.info("Program terminated. Waiting for all threads to finish...")
+    irrigate.terminated = True
 
 class Irrigate:
   def __init__(self, configFilename):
     self.init(configFilename)
     self.logger.info("Configuration '%s' loaded." % configFilename)
-
+    self.terminated = False
     self.mqtt = Mqtt(self)
     if self.cfg.mqttEnabled:
       self.logger.info("MQTT initialzing...")
@@ -34,6 +42,7 @@ class Irrigate:
     self.sched.start()
     self.logger.info("Starting telemetry thread '%s'." % self.telemetry.getName())
     self.telemetry.start()
+
     if not aAsync:
       self.sched.join()
       self.logger.info("Scheduler thread exited. Terminating Irrigate!")
@@ -47,7 +56,7 @@ class Irrigate:
   def initThreads(self):
     for i in range(self.cfg.valvesConcurrency):
       worker = Thread(target=self.irrigationHandler, args=())
-      worker.setDaemon(True)
+      worker.setDaemon(False)
       worker.setName("ValveTh%s" % i)
       worker.start()
 
@@ -91,8 +100,13 @@ class Irrigate:
     return False
 
   def irrigationHandler(self):
-    while True:
-      irrigateJob  = self.q.get()
+    while not self.terminated:
+      while self.q.empty() and not self.terminated:
+        time.sleep(1)
+      try:
+        irrigateJob = self.q.get(timeout=1)
+      except queue.Empty:
+        continue
       if irrigateJob.valve.handled:
         self.logger.warning("Valve '%s' already handled. Returning to queue in 1 minute." % (irrigateJob.valve.name))
         time.sleep(61)
@@ -108,6 +122,9 @@ class Irrigate:
         sensorDisabled = False
         openSince = None
         while startTime + duration > datetime.now():
+          if self.terminated:
+            self.logger.info("Program exiting. Terminating irrigation cycle for valve '%s'..." % (valve.name))
+            break
           if irrigateJob.sched != None and irrigateJob.sched.sensor != None: 
             sensorDisabled = irrigateJob.sched.sensor.handler.shouldDisable()
           if valve.enabled == False:
@@ -198,6 +215,5 @@ class Irrigate:
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
-
 
     
