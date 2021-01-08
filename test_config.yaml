@@ -6,7 +6,7 @@ general:
   timezone: 'Israel'
 
 mqtt:
-  enabled: true
+  enabled: false
   hostname: dockerpi
   clientname: irrigationPi
 

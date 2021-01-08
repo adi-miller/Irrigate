@@ -40,16 +40,3 @@ class Job:
     else:
       self.duration = duration
     self.sched = sched
-
-def queueJob(logger, q, job):
-  exists = False
-  for j in q.queue:
-    if j.sched == job.sched and j.valve == job.valve:
-      exists = True
-
-  if not exists:
-    q.put(job)
-    if job.sched != None:
-      logger.info("Valve '%s' job queued per sched '%s'. Duration %s minutes." % (job.valve.name, job.sched.name, job.duration))
-    else:
-      logger.info("Valve '%s' adhoc job queued. Duration %s minutes." % (job.valve.name, job.duration))

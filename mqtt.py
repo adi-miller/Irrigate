@@ -2,7 +2,7 @@ import model
 import threading 
 from paho.mqtt import client 
 from paho.mqtt import subscribe 
-
+import time
 class MyUserData:
   logger = None
   q = None
@@ -18,16 +18,25 @@ class MyUserData:
 def initMqtt(cfg, logger, q, queueJob):
   myUserData = MyUserData(logger, q, cfg.valves, queueJob)
 
+  logger.info("Connecting to MQTT service '%s'..." % cfg.mqttHostName)
   mqttClient = getMyMqtt(cfg, myUserData)
 
   topicPrefix = str(cfg.mqttClientName) + "/"
   mqttClient.subscribe(topicPrefix + "open/+/command")
   mqttClient.subscribe(topicPrefix + "suspend/+/command")
+  mqttClient.subscribe(topicPrefix + "enabled/+/command")
   mqttClient.on_message = on_message
 
   worker = threading.Thread(target=mqttLooper, args=(mqttClient, logger))
   worker.setDaemon(True)
   worker.start()
+  logger.info("MQTT thread '%s' started." % worker.getName())
+  while not mqttClient.is_connected():
+    logger.info("Waiting for MQTT connection...")
+    time.sleep(1)
+
+  logger.info("MQTT connected: %s" % mqttClient.is_connected())
+
 
 def getMyMqtt(cfg, myUserData):
   mqttClient = client.Client(cfg.mqttClientName)
@@ -61,7 +70,7 @@ def processMessages(logger, valves, q, queueJob, topic, payload):
   valveName = topicParts[2]
 
   if topicParts[1] == "open":
-    queueJob(logger, q, model.Job(valve = valves[valveName], duration = int(payload)))
+    queueJob(model.Job(valve = valves[valveName], duration = int(payload)))
   if topicParts[1] == "suspend":
     if int(payload) == 0:
       valves[valveName].suspended = False
