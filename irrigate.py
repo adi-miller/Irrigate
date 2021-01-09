@@ -27,20 +27,32 @@ def main(argv):
 
 class Irrigate:
   def __init__(self, configFilename):
+    self.logger = self.getLogger()
+    self.logger.info("Reading configuration file '%s'..." % configFilename)
     self.init(configFilename)
-    self.logger.info("Configuration '%s' loaded." % configFilename)
     self.terminated = False
     self.mqtt = Mqtt(self)
-    if self.cfg.mqttEnabled:
-      self.logger.info("MQTT initialzing...")
-      self.mqtt.start()
-
-    self.initThreads()
+    self.createThreads()
 
   def start(self, test = True):
+    if self.cfg.mqttEnabled:
+      self.logger.info("Starting MQTT...")
+      self.mqtt.start()
+
+    self.logger.debug("Starting worker threads...")
     for worker in self.workers:
+      self.logger.info("Starting worker thread '%s'." % worker.getName())
       worker.setDaemon(test)
       worker.start()
+
+    self.logger.debug("Starting sensors...")
+    for sch in self.cfg.schedules.values():
+      if sch.sensor != None:
+        sensorHandler = sch.sensor.handler
+        if not sensorHandler.started:
+          self.logger.info("Starting sensor '%s'." % format(sensorHandler))
+          sensorHandler.start()
+
 
     self.logger.info("Starting scheduler thread '%s'." % self.sched.getName())
     self.sched.start()
@@ -48,12 +60,11 @@ class Irrigate:
     self.telemetry.start()
 
   def init(self, cfgFilename):
-    self.logger = self.getLogger()
     self.cfg = config.Config(self.logger, cfgFilename)
     self.valves = self.cfg.valves
     self.q = queue.Queue()
 
-  def initThreads(self):
+  def createThreads(self):
     self.workers = []
     for i in range(self.cfg.valvesConcurrency):
       worker = Thread(target=self.irrigationHandler, args=())
@@ -120,7 +131,7 @@ class Irrigate:
           openSince = None
           while startTime + duration > datetime.now():
             if self.terminated:
-              self.logger.info("Program exiting. Terminating irrigation cycle for valve '%s'..." % (valve.name))
+              self.logger.warning("Program exiting. Terminating irrigation cycle for valve '%s'..." % (valve.name))
               break
             if irrigateJob.sched != None and irrigateJob.sched.sensor != None: 
               sensorDisabled = irrigateJob.sched.sensor.handler.shouldDisable()

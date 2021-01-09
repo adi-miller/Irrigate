@@ -53,7 +53,7 @@ class Config:
     for sensor in self.cfg['sensors']:
       sensorYaml = self.cfg['sensors'][sensor]
       sensorType = sensorYaml['type']
-      sensorObj = model.Sensor(sensorType, sensorFactory(sensorType))
+      sensorObj = model.Sensor(sensorType, sensorFactory(sensorType, self.logger, sensorYaml))
       sensorObj.enabled = sensorYaml['enabled']
       sensors[sensor] = sensorObj
 
@@ -74,4 +74,3 @@ class Config:
       scheds[sched] = schedObj
 
     return scheds
-
