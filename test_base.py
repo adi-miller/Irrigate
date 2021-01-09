@@ -1,7 +1,7 @@
 import pytz
 import time
 import datetime
-from logic import Irrigate 
+from irrigate import Irrigate 
 from suntime import Sun
 
 def assertValves(valves, valveNames, status):
@@ -50,7 +50,7 @@ def test_suspendInTheMiddle():
   valves['valve1'].suspended = True
   time.sleep(15)
   valves['valve1'].suspended = False
-  time.sleep(31)
+  time.sleep(33)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert valves['valve1'].openSeconds == 45
   assert len(q.queue) == 0
@@ -71,7 +71,7 @@ def test_suspendedFromStart():
   valves['valve1'].suspended = False
   time.sleep(15)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (False, False), (False, False)])
-  time.sleep(31)
+  time.sleep(32)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert valves['valve1'].openSeconds == 45
   assert len(q.queue) == 0
@@ -191,23 +191,16 @@ def test_valveDisableDuring():
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (True, True), (True, True)])
   assert len(q.queue) == 0
-  time.sleep(55)
-  assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (True, True)])
-  assert len(q.queue) == 0
-  time.sleep(5)
-  assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
 
-def xtest_mix():
+def test_terminate():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   cfg.valvesConcurrency = 1
   setStartTimeToNow(cfg, 'sched1')
   setStartTimeToNow(cfg, 'sched2', deltaInMinutes=1)
-  cfg.schedules['sched1'].sensor.handler.factor = 1.5
-  cfg.schedules['sched2'].sensor.handler.factor = 0.5
-  cfg.valves['valve3'].enabled = False
-  cfg.valves['valve4'].enabled = False
-  irrigate.start()
+  irrigate.start(False)
   time.sleep(3)
-  assertValves(valves, ['valve1', 'valve2', 'valve3', 'valve5'], [(False, False), (False, False), (False, False), (False, False)])
+  assertValves(valves, ['valve1', 'valve2'], [(True, True), (True, True)])
   assert len(q.queue) == 0
+  irrigate.terminated = True
+  time.sleep(3)
+  assertValves(valves, ['valve1', 'valve2'], [(False, False), (False, False)])

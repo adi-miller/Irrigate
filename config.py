@@ -1,6 +1,7 @@
 import yaml
 import model
-from sensors import sensorFactory
+import sensors.sensors
+from sensors.sensors import sensorFactory
 
 class Config:
   def __init__(self, logger, filename):
