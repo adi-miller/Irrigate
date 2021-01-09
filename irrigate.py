@@ -191,9 +191,12 @@ class Irrigate:
               for valveSched in aValve.schedules.values():
                 if self.evalSched(valveSched, self.cfg.timezone):
                   job = model.Job(valve = aValve, sched = valveSched)
+                  if (job.duration != valveSched.duration):
+                    self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, job.duration))
                   self.queueJob(job)
         time.sleep(60)
-    except:
+    except Exception as ex:
+      self.logger.error("Error occured in the Scheduler thread: '%s'" % format(ex))
       self.logger.error("Scheduler thread exited. Terminating Irrigate!")
       self.terminated = True
 

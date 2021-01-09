@@ -70,7 +70,10 @@ class Config:
       aDays = schedYaml['days']
       schedObj = model.Schedule(sched, aType, aStart, aDuration, aDays)
       if 'sensor' in schedYaml:
-        schedObj.sensor = self.sensors[schedYaml['sensor']]
+        if schedYaml['sensor'] in self.sensors:
+          schedObj.sensor = self.sensors[schedYaml['sensor']]
+        else:
+          self.logger.warning("Sensor type '%s' which is specified in schedules '%s' was not found in sensors section." % (schedYaml['sensor'], sched))
       scheds[sched] = schedObj
 
     return scheds

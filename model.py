@@ -33,7 +33,7 @@ class Job:
       raise Exception("Unsupported")
     self.valve = valve
     if sched != None:
-      if sched.sensor != None:
+      if sched.sensor != None and sched.sensor.handler != None:
         self.duration = sched.duration * sched.sensor.handler.getFactor()
       else:
         self.duration = sched.duration
