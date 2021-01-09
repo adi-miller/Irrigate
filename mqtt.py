@@ -61,9 +61,10 @@ class Mqtt:
   def publish(self, topic, payload):
     topicPrefix = str(self.cfg.mqttClientName) + "/raspi/"
     self.mqttClient.publish(topicPrefix + topic, payload)
-    self.logger.debug("Telemetry: %s: '%s'" % (topicPrefix + topic, payload))
+    self.logger.debug("MQTT message sent for topic '%s' payload '%s'." % (topicPrefix + topic, payload))
 
   def processMessages(self, topic, payload):
+    self.logger.debug("MQTT message received on topic '%s' payload '%s'." % (topic, payload))
     topicParts = topic.split("/")
     valveName = topicParts[2]
 
