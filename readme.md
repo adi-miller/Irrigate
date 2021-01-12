@@ -6,6 +6,7 @@
 - pip install suntime
 - pip install pytz
 - pip install paho-mqtt
+- pip install requests
 
 ## Instructions
 

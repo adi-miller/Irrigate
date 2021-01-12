@@ -41,6 +41,9 @@ class TestSensor():
     self.started = True
     self.logger.info("Sensor Test started.")
 
+  # This method is called every 0.5 seconds while the valve is open, so 
+  # it must return quickly. If any long processing is needed, it should
+  # be executed in a thread and stored to be fetched quickly by this call. 
   def shouldDisable(self):
     return self.disable
 

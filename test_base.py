@@ -110,56 +110,10 @@ def test_sunset():
   time.sleep(60)
   assertValves(valves, ['valve4'], [(False, False)])
 
-def test_sh_sensorOnOff():
-  irrigate, logger, cfg, valves, q = init("test_config.yaml")
-  setStartTimeToNow(cfg, 'sched4')
-  cfg.valves['valve1'].schedules.clear()
-  cfg.valves['valve2'].schedules.clear()
-  cfg.valves['valve3'].schedules.clear()
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['valve5'], [(True, True)])
-  cfg.schedules['sched4'].sensor.handler.disable = True
-  time.sleep(3)
-  assertValves(valves, ['valve5'], [(True, False)])
-  cfg.schedules['sched4'].sensor.handler.disable = False
-  time.sleep(3)
-  assertValves(valves, ['valve5'], [(True, True)])
-
-def test_sh_sensorFactor():
-  irrigate, logger, cfg, valves, q = init("test_config.yaml")
-  setStartTimeToNow(cfg, 'sched4')
-  cfg.valves['valve1'].schedules.clear()
-  cfg.valves['valve2'].schedules.clear()
-  cfg.valves['valve3'].schedules.clear()
-  cfg.schedules['sched4'].sensor.handler.factor = 0.1
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['valve5'], [(True, True)])
-  time.sleep(5)
-  assertValves(valves, ['valve5'], [(False, False)])
-  assert valves['valve5'].openSeconds == 6
-
-def test_sh_sensorIgnoredOnMqtt():
-  irrigate, logger, cfg, valves, q = init("test_config.yaml")
-  cfg.valves['valve1'].schedules.clear()
-  cfg.valves['valve2'].schedules.clear()
-  cfg.valves['valve3'].schedules.clear()
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['valve1', 'valve2', 'valve3', 'valve5'], [(False, False), (False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/open/valve5/command", 1)
-  time.sleep(3)
-  assertValves(valves, ['valve5'], [(True, True)])
-  cfg.schedules['sched4'].sensor.handler.disable = True
-  time.sleep(3)
-  assertValves(valves, ['valve5'], [(True, True)])
-
 def test_valveDisableInitially():
+  # When a valve is disabled, it doesn't get scheduled so enabling it after the schedule was
+  # already evaluated, does not queue it. 
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
-  cfg.valvesConcurrency = 2
-
   setStartTimeToNow(cfg, 'sched1')
   setStartTimeToNow(cfg, 'sched2', deltaInMinutes=1)
   cfg.valves['valve1'].enabled = False
@@ -169,8 +123,8 @@ def test_valveDisableInitially():
   time.sleep(3)
   assert len(q.queue) == 0
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
-  time.sleep(60)
-  assert len(q.queue) == 0
+  cfg.valves['valve1'].enabled = False
+  time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
 
 def test_valveDisableDuring():
@@ -192,7 +146,7 @@ def test_valveDisableDuring():
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (True, True), (True, True)])
   assert len(q.queue) == 0
 
-def test_terminate():
+def xtest_terminate():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   cfg.valvesConcurrency = 1
   setStartTimeToNow(cfg, 'sched1')
@@ -204,3 +158,8 @@ def test_terminate():
   irrigate.terminated = True
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2'], [(False, False), (False, False)])
+
+def test_sensorLoading():
+  irrigate, logger, cfg, valves, q = init("test_config.yaml")
+  irrigate.start()
+  time.sleep(60)

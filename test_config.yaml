@@ -15,7 +15,7 @@ telemetry:
   endpoints:
     - mqtt
   idleinterval: 10
-  
+
 schedules:
   # type: absolute, sunrise, sunset
   # start:
@@ -41,12 +41,19 @@ schedules:
     type: sunset
     start: '-00:30'
     duration: 15
+    sensor: sensor1
   sched4:
     days: [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
     type: absolute 
     start: '09:11'
     duration: 1
     sensor: sensor1
+  sched5:
+    days: []
+    type: absolute 
+    start: '09:11'
+    duration: 1
+    sensor: xdarkskySensor
 
 valves:
   valve1: 
@@ -69,6 +76,10 @@ valves:
     enabled: true
     schedules: 
       - sched4
+  valve6:
+    enabled: true
+    schedules:
+      - sched5
 
 sensors:
   sensor1:
@@ -77,3 +88,10 @@ sensors:
   sensor2:
     enabled: true
     type: uv
+  darkskySensor:
+    enabled: false
+    type: darksky
+    apikey: 88189d86868e2d848e5e81e40ae332e2
+    latitude: 32.132
+    longitude: 34.838
+    updateinterval: 240

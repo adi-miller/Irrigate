@@ -123,21 +123,15 @@ class Irrigate:
           valve = irrigateJob.valve
           valve.handled = True
           self.logger.info("Irrigation cycle start for valve '%s' for %s minutes." % (valve.name, irrigateJob.duration))
-          startTime = datetime.now()
           duration = timedelta(minutes = irrigateJob.duration)
           currentOpen = 0
           initialOpen = valve.openSeconds
           sensorDisabled = False
           openSince = None
+          startTime = datetime.now()
           while startTime + duration > datetime.now():
-            if self.terminated:
-              self.logger.warning("Program exiting. Terminating irrigation cycle for valve '%s'..." % (valve.name))
-              break
             if irrigateJob.sched != None and irrigateJob.sched.sensor != None: 
               sensorDisabled = irrigateJob.sched.sensor.handler.shouldDisable()
-            if valve.enabled == False:
-              self.logger.info("Valve '%s' disabled. Terminating irrigation cycle." % (valve.name))
-              break
             if not valve.open and not valve.suspended and not sensorDisabled:
               valve.open = True
               openSince = datetime.now()
@@ -153,6 +147,12 @@ class Irrigate:
             if valve.open:
               currentOpen = (datetime.now() - openSince).seconds
               valve.openSeconds = initialOpen + currentOpen
+            if valve.enabled == False:
+              self.logger.info("Valve '%s' disabled. Terminating irrigation cycle." % (valve.name))
+              break
+            if self.terminated:
+              self.logger.warning("Program exiting. Terminating irrigation cycle for valve '%s'..." % (valve.name))
+              break
 
             self.logger.debug("Irrigation valve '%s' currentOpen = %s seconds. totalOpen = %s." % (valve.name, currentOpen, valve.openSeconds))
             time.sleep(0.5)
