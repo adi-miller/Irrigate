@@ -28,7 +28,7 @@ if it is suspended. It does override any sensors because sensors are defined on 
 
 ### The difference between Suspend and Disable
 
-Suspend doesn't cancel scheduling but only prevents openning the valve. This means that the job will still be scheduled and handled but the valve will not open. Suspend also works during the scheduling period meaning that if the valve is already open, suspend will close it without cancelling the remaining time left for the schedule.
+Suspend doesn't cancel scheduling but only prevents openning the valve. This means that the job will still be scheduled and handled but the valve will not open. Suspend also works during the scheduling period, meaning that if the valve is already open, suspend will close it without cancelling the remaining time left for the schedule.
 
 Enable is tested before scheduling, so if the valve is disabled (enable=false) the job will not be scheduled at all (unlike with suspended). If Enabled is set to False during the job execution then the valve is closed and the job is terminated.
 
