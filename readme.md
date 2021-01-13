@@ -2,11 +2,7 @@
 
 ## Installation
 
-- pip install pyyaml
-- pip install suntime
-- pip install pytz
-- pip install paho-mqtt
-- pip install requests
+`pip install -r requirements.txt`
 
 ## Instructions
 
