@@ -91,7 +91,7 @@ sensors:
   darkskySensor:
     enabled: false
     type: darksky
-    apikey: 88189d86868e2d848e5e81e40ae332e2
-    latitude: 32.132
-    longitude: 34.838
+    apikey: <darksky_apikey>
+    latitude: 33.132
+    longitude: 35.838
     updateinterval: 240
