@@ -27,6 +27,7 @@ def main(argv):
 
 class Irrigate:
   def __init__(self, configFilename):
+    self.startTime = datetime.now()
     self.logger = self.getLogger()
     self.logger.info("Reading configuration file '%s'..." % configFilename)
     self.init(configFilename)
@@ -130,12 +131,15 @@ class Irrigate:
           openSince = None
           startTime = datetime.now()
           while startTime + duration > datetime.now():
+            # The following two if statements needs to be together and first to prevent
+            # the valve from opening if the sensor is disable. 
             if irrigateJob.sched != None and irrigateJob.sched.sensor != None: 
               sensorDisabled = irrigateJob.sched.sensor.handler.shouldDisable()
             if not valve.open and not valve.suspended and not sensorDisabled:
               valve.open = True
               openSince = datetime.now()
               self.logger.info("Irrigation valve '%s' opened." % (valve.name))
+              
             if valve.open and (valve.suspended or sensorDisabled):
               valve.open = False
               currentOpen = (datetime.now() - openSince).seconds
@@ -196,15 +200,15 @@ class Irrigate:
                   self.queueJob(job)
         time.sleep(60)
     except Exception as ex:
-      self.logger.error("Error occured in the Scheduler thread: '%s'" % format(ex))
-      self.logger.error("Scheduler thread exited. Terminating Irrigate!")
+      self.logger.error("Scheduler thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
 
   def telemetryHander(self):
     try:
       while True:
-        time.sleep(self.cfg.telemetryInterval * 60)
-        self.mqtt.publish(self.cfg.mqttClientName + "/svc/uptime", 0)
+        # time.sleep(self.cfg.telemetryInterval * 60)
+        uptime = (datetime.now() - self.startTime).seconds // 60
+        self.mqtt.publish("/svc/uptime", 0)
         for valve in self.valves:
           statusStr = "enabled"
           if not self.cfg.valves[valve].enabled:
@@ -216,8 +220,8 @@ class Irrigate:
           if self.cfg.mqttEnabled:
             self.mqtt.publish(valve+"/status", statusStr)
             self.mqtt.publish(valve+"/duration", self.cfg.valves[valve].openSeconds)
-    except:
-      self.logger.error("Telemetry thread exited. Terminating Irrigate!")
+    except Exception as ex:
+      self.logger.error("Telemetry thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
           
 
