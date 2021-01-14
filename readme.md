@@ -4,6 +4,12 @@
 
 `pip install -r requirements.txt`
 
+Copy config_sample.yaml to config.yaml and edit to match your location and preferences. 
+
+## Run
+
+`python3 irrigate.py <config.yaml>`
+
 ## Instructions
 
 - Valve `suspend` works while working and doesn't cancel the job. Suspension can be observed by examining openSeconds
