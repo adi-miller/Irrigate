@@ -23,30 +23,35 @@ schedules:
   # duration: in minutes
   sched1: 
     # All days of the week, for 20 minutes, at 06:10 am
+    seasons: [Spring, Summer, Fall, Winter]
     days: [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
     type: absolute 
     start: '09:10'
     duration: 1
   sched2:
     # On Sunday and Thursday, for 15 minutes, 10 minutes after sunrise. 
+    seasons: [Spring, Summer, Fall, Winter]
     days: [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
     type: absolute 
     start: '09:11'
     duration: 1
   sched3:
     # On Sunday and Thursday, for 15 minutes, 10 minutes after sunrise. 
+    seasons: [Spring, Summer, Fall, Winter]
     days: [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
     type: sunset
     start: '-00:30'
     duration: 15
     sensor: sensor1
   sched4:
+    seasons: [Spring, Summer, Fall, Winter]
     days: [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
     type: absolute 
     start: '09:11'
     duration: 1
     sensor: sensor1
   sched5:
+    seasons: [Spring, Summer, Fall, Winter]
     days: []
     type: absolute 
     start: '09:11'

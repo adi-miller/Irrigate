@@ -78,7 +78,7 @@ class Mqtt:
     valves = self.valves
 
     if topicParts[1] == "open":
-      self.irrigate.queueJob(model.Job(valve = valves[valveName], sched = None, duration = int(payload)))
+      self.irrigate.queueJob(model.Job(valve = valves[valveName], sched = None, duration = payload))
     if topicParts[1] == "suspend":
       if int(payload) == 0:
         valves[valveName].suspended = False

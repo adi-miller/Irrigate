@@ -9,12 +9,13 @@ class Valve:
     self.schedules = {}
 
 class Schedule:
-  def __init__(self, name, type, start, duration, days):
+  def __init__(self, name, type, start, duration, days, seasons):
     self.name = name
     self.type = type
     self.start = start
     self.duration = duration
     self.days = days
+    self.seasons = seasons
     self.sensor = None
 
 class Sensor:

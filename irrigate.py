@@ -83,34 +83,62 @@ class Irrigate:
       self.telemetry.setName("TelemTh")
 
   def evalSched(self, sched, timezone):
-    todayStr = calendar.day_name[datetime.today().weekday()]
-    for day in sched.days:
-      if todayStr.startswith(day):
-        hours, minutes = sched.start.split(":")
-        startTime = datetime.now()
+    todayStr = calendar.day_abbr[datetime.today().weekday()]
+    if not todayStr in sched.days:
+      return False
+      
+    lat, lon = self.cfg.getLatLon()
+    if sched.seasons != None and not self.getSeason(lat) in sched.seasons:
+      return False
+  
+    hours, minutes = sched.start.split(":")
+    startTime = datetime.now()
 
-        if sched.type == 'absolute':
-          startTime = startTime.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
-        else:
-          lat, lon = self.cfg.getLatLon()
-          sun = Sun(lat, lon)
-          if sched.type == 'sunrise':
-            startTime = sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
-          elif sched.type == 'sunset':
-            startTime = sun.get_local_sunset_time().replace(tzinfo=pytz.timezone(timezone))
+    if sched.type == 'absolute':
+      startTime = startTime.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
+    else:
+      sun = Sun(lat, lon)
+      if sched.type == 'sunrise':
+        startTime = sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
+      elif sched.type == 'sunset':
+        startTime = sun.get_local_sunset_time().replace(tzinfo=pytz.timezone(timezone))
 
-        if hours[0] == '+':
-          hours = hours[1:]
-          startTime = startTime + timedelta(hours=int(hours), minutes=int(minutes))
-        if hours[0] == '-':
-          hours = hours[1:]
-          startTime = startTime - timedelta(hours=int(hours), minutes=int(minutes))
+    if hours[0] == '+':
+      hours = hours[1:]
+      startTime = startTime + timedelta(hours=int(hours), minutes=int(minutes))
+    if hours[0] == '-':
+      hours = hours[1:]
+      startTime = startTime - timedelta(hours=int(hours), minutes=int(minutes))
 
-        now = datetime.now().replace(tzinfo=pytz.timezone(timezone), second=0, microsecond=0)
-        if startTime == now:
-          return True
-        break
+    now = datetime.now().replace(tzinfo=pytz.timezone(timezone), second=0, microsecond=0)
+    if startTime == now:
+      return True
+
     return False
+
+  def getSeason(self, lat):
+    month = datetime.today().month
+    season = None
+    if lat >= 0:
+      if 3 <= month <= 5:
+        season = "Spring"
+      elif 6 <= month <= 8:
+        season = "Summer"
+      elif 9 <= month <= 11:
+        season = "Fall"
+      elif month == 12 or month <= 2:
+        season = "Winter"
+    else:
+      if 3 <= month <= 5:
+        season = "Fall"
+      elif 6 <= month <= 8:
+        season = "Winter"
+      elif 9 <= month <= 11:
+        season = "Spring"
+      elif month == 12 or month <= 2:
+        season = "Summer"
+
+    return season
 
   def irrigationHandler(self):
     while not self.terminated:
