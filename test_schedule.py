@@ -88,3 +88,21 @@ def test_schedOverlap():
   assert valves['valve1'].openSeconds == 120
   assert len(q.queue) == 0
 
+def test_schedDupCheck():
+  irrigate, logger, cfg, valves, q = init("test_config.yaml")
+  setStartTimeToNow(cfg, 'sched1', duration=3)
+  setStartTimeToNow(cfg, 'sched2', deltaInMinutes=0, duration=3)
+  valves = cfg.valves
+  assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
+  assert len(q.queue) == 0
+  irrigate.start()
+  time.sleep(3)
+  assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
+  assert len(q.queue) == 1
+  time.sleep(60)
+  assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
+  assert len(q.queue) == 1
+  time.sleep(60)
+  assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
+  assert len(q.queue) == 1
+

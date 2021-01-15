@@ -12,8 +12,6 @@ mqtt:
 
 telemetry:
   enabled: true
-  endpoints:
-    - mqtt
   idleinterval: 10
 
 schedules:

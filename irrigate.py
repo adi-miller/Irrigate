@@ -127,20 +127,23 @@ class Irrigate:
           duration = timedelta(minutes = irrigateJob.duration)
           currentOpen = 0
           initialOpen = valve.openSeconds
-          sensorDisabled = False
+          holdSuspended = valve.suspended
           openSince = None
           startTime = datetime.now()
           while startTime + duration > datetime.now():
             # The following two if statements needs to be together and first to prevent
             # the valve from opening if the sensor is disable. 
-            if irrigateJob.sched != None and irrigateJob.sched.sensor != None: 
-              sensorDisabled = irrigateJob.sched.sensor.handler.shouldDisable()
-            if not valve.open and not valve.suspended and not sensorDisabled:
+            if irrigateJob.sensor != None: 
+              shouldDisable = irrigateJob.sensor.handler.shouldDisable()
+              if (valve.suspended != shouldDisable):
+                valve.suspended = shouldDisable
+                self.logger.info("Sensor reported sensorDisabled = '%s'." % shouldDisable)
+            if not valve.open and not valve.suspended:
               valve.open = True
               openSince = datetime.now()
               self.logger.info("Irrigation valve '%s' opened." % (valve.name))
-              
-            if valve.open and (valve.suspended or sensorDisabled):
+
+            if valve.open and valve.suspended:
               valve.open = False
               currentOpen = (datetime.now() - openSince).seconds
               openSince = None
@@ -159,7 +162,7 @@ class Irrigate:
               break
 
             self.logger.debug("Irrigation valve '%s' currentOpen = %s seconds. totalOpen = %s." % (valve.name, currentOpen, valve.openSeconds))
-            time.sleep(0.5)
+            time.sleep(1)
 
           self.logger.info("Irrigation cycle ended for valve '%s'." % (valve.name))
           if valve.open and not valve.suspended:
@@ -169,22 +172,17 @@ class Irrigate:
             valve.open = False
             self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.openSeconds))
           valve.handled = False
+          valve.suspended = holdSuspended
         self.q.task_done();
       except queue.Empty:
         pass
 
   def queueJob(self, job):
-    exists = False
-    for j in self.q.queue:
-      if j.sched == job.sched and j.valve == job.valve:
-        exists = True
-
-    if not exists:
-      self.q.put(job)
-      if job.sched != None:
-        self.logger.info("Valve '%s' job queued per sched '%s'. Duration %s minutes." % (job.valve.name, job.sched.name, job.duration))
-      else:
-        self.logger.info("Valve '%s' adhoc job queued. Duration %s minutes." % (job.valve.name, job.duration))
+    self.q.put(job)
+    if job.sched != None:
+      self.logger.info("Valve '%s' job queued per sched '%s'. Duration %s minutes." % (job.valve.name, job.sched.name, job.duration))
+    else:
+      self.logger.info("Valve '%s' adhoc job queued. Duration %s minutes." % (job.valve.name, job.duration))
 
   def schedulerThread(self):
     try:
@@ -194,10 +192,13 @@ class Irrigate:
             if aValve.schedules != None:
               for valveSched in aValve.schedules.values():
                 if self.evalSched(valveSched, self.cfg.timezone):
-                  job = model.Job(valve = aValve, sched = valveSched)
-                  if (job.duration != valveSched.duration):
-                    self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, job.duration))
+                  jobDuration = valveSched.duration
+                  if valveSched.sensor != None and valveSched.sensor.handler != None:
+                    jobDuration = jobDuration * valveSched.sensor.handler.getFactor()
+                    self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
+                  job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
                   self.queueJob(job)
+        # Must not evaluate more than once a minute otherwise running jobs will get queued again
         time.sleep(60)
     except Exception as ex:
       self.logger.error("Scheduler thread exited with error '%s'. Terminating Irrigate!" % format(ex))
@@ -206,7 +207,7 @@ class Irrigate:
   def telemetryHander(self):
     try:
       while True:
-        # time.sleep(self.cfg.telemetryInterval * 60)
+        time.sleep(self.cfg.telemetryInterval * 60)
         uptime = (datetime.now() - self.startTime).seconds // 60
         self.mqtt.publish("/svc/uptime", 0)
         for valve in self.valves:

@@ -52,7 +52,7 @@ def test_suspendInTheMiddle():
   valves['valve1'].suspended = False
   time.sleep(33)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
-  assert valves['valve1'].openSeconds == 45
+  assert 44 < valves['valve1'].openSeconds < 46
   assert len(q.queue) == 0
 
 def test_suspendedFromStart():
@@ -73,7 +73,7 @@ def test_suspendedFromStart():
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (False, False), (False, False)])
   time.sleep(32)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
-  assert valves['valve1'].openSeconds == 45
+  assert 44 < valves['valve1'].openSeconds < 46
   assert len(q.queue) == 0
 
 def test_sunset():

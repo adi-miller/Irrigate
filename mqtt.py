@@ -9,6 +9,7 @@ class Mqtt:
     self.cfg = irrigate.cfg
     self.valves = irrigate.valves
     self.irrigate = irrigate
+    self.mqttStarted = False
 
   def start(self):
     self.logger.info("Connecting to MQTT service '%s'..." % self.cfg.mqttHostName)
@@ -24,6 +25,7 @@ class Mqtt:
     worker = threading.Thread(target=self.mqttLooper, args=())
     worker.setDaemon(True)
     worker.start()
+    self.mqttStarted = True
     self.logger.info("MQTT thread '%s' started." % worker.getName())
     while not self.mqttClient.is_connected():
       self.logger.info("Waiting for MQTT connection...")
@@ -59,6 +61,9 @@ class Mqtt:
     self.processMessages(msg.topic, msg.payload)
 
   def publish(self, topic, payload):
+    if not self.mqttStarted:
+      return
+
     topicPrefix = str(self.cfg.mqttClientName)
     if not topic.startswith("/"):
       topicPrefix = topicPrefix + "/raspi/"
@@ -73,7 +78,7 @@ class Mqtt:
     valves = self.valves
 
     if topicParts[1] == "open":
-      self.irrigate.queueJob(model.Job(valve = valves[valveName], duration = int(payload)))
+      self.irrigate.queueJob(model.Job(valve = valves[valveName], sched = None, duration = int(payload)))
     if topicParts[1] == "suspend":
       if int(payload) == 0:
         valves[valveName].suspended = False

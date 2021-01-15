@@ -24,19 +24,8 @@ class Sensor:
     self.handler = handler
 
 class Job:
-  valve = None
-  duration = 0
-  sched = None
-
-  def __init__(self, valve, duration = None, sched = None):
-    if duration != None and sched != None:
-      raise Exception("Unsupported")
+  def __init__(self, valve, duration, sched, sensor = None):
     self.valve = valve
-    if sched != None:
-      if sched.sensor != None and sched.sensor.handler != None:
-        self.duration = sched.duration * sched.sensor.handler.getFactor()
-      else:
-        self.duration = sched.duration
-    else:
-      self.duration = duration
+    self.duration = duration
     self.sched = sched
+    self.sensor = sensor
