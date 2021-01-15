@@ -50,10 +50,12 @@ class Irrigate:
     for sch in self.cfg.schedules.values():
       if sch.sensor != None:
         sensorHandler = sch.sensor.handler
-        if not sensorHandler.started:
-          self.logger.info("Starting sensor '%s'." % format(sensorHandler))
-          sensorHandler.start()
-
+        try:
+          if not sensorHandler.started:
+            self.logger.info("Starting sensor '%s'." % format(sensorHandler))
+            sensorHandler.start()
+        except Exception as ex:
+          self.logger.error("Error starting sensor '%s': '%s'." % (sch.sensor.type, format(ex)))
 
     self.logger.info("Starting scheduler thread '%s'." % self.sched.getName())
     self.sched.start()
@@ -161,11 +163,15 @@ class Irrigate:
           while startTime + duration > datetime.now():
             # The following two if statements needs to be together and first to prevent
             # the valve from opening if the sensor is disable. 
-            if irrigateJob.sensor != None: 
-              holdSensorDisabled = irrigateJob.sensor.handler.shouldDisable()
-              if holdSensorDisabled != sensorDisabled:
-                sensorDisabled = holdSensorDisabled
-                self.logger.info("Suspend set to '%s' for valve '%s' from sensor" % (sensorDisabled, valve.name))
+            if irrigateJob.sensor != None and irrigateJob.sensor.handler.started: 
+              try:
+                holdSensorDisabled = irrigateJob.sensor.handler.shouldDisable()
+                if holdSensorDisabled != sensorDisabled:
+                  sensorDisabled = holdSensorDisabled
+                  self.logger.info("Suspend set to '%s' for valve '%s' from sensor" % (sensorDisabled, valve.name))
+              except Exception as ex:
+                self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.type, format(ex)))
+
             if not valve.open and not valve.suspended and not sensorDisabled:
               valve.open = True
               openSince = datetime.now()
@@ -220,11 +226,14 @@ class Irrigate:
               for valveSched in aValve.schedules.values():
                 if self.evalSched(valveSched, self.cfg.timezone):
                   jobDuration = valveSched.duration
-                  if valveSched.sensor != None and valveSched.sensor.handler != None:
-                    factor = valveSched.sensor.handler.getFactor()
-                    if factor != 1:
-                      jobDuration = jobDuration * factor
-                      self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
+                  if valveSched.sensor != None and valveSched.sensor.handler != None and valveSched.sensor.handler.started:
+                    try:
+                      factor = valveSched.sensor.handler.getFactor()
+                      if factor != 1:
+                        jobDuration = jobDuration * factor
+                        self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
+                    except Exception as ex:
+                      self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
                   job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
                   self.queueJob(job)
         # Must not evaluate more than once a minute otherwise running jobs will get queued again

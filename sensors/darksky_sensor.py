@@ -64,12 +64,16 @@ class DarkskySensor:
       self.logger.error("Failed calling Darksky.")
       return 0, 0, 0
 
-    daily = response.json()['daily']['data'][0]
-    uv = daily['uvIndex']
-    precip = daily['precipIntensityMax']
-    precipProbability = daily['precipProbability']
+    try:
+      daily = response.json()['daily']['data'][0]
+      uv = daily['uvIndex']
+      precip = daily['precipIntensityMax']
+      precipProbability = daily['precipProbability']
+      return uv, precip, precipProbability
+    except Exception as ex:
+      self.logger.error("Error parsing Darksky response: %s." % format(ex))
+      return 0, 0, 0
 
-    return uv, precip, precipProbability
 
   def shouldDisable(self):
     # Disable if it is likely to rain today

@@ -31,10 +31,14 @@ class TestSensor():
     self.logger = logger
     self.disable = False
     self.factor = 1
+    self.exception = False
     self.started = False
 
   # Can be called multiple times. Make sure to initialize only once
   def start(self):
+    if self.exception:
+      raise Exception("Test exception in sensor.start()")
+
     if self.started:
       return
 
@@ -45,9 +49,15 @@ class TestSensor():
   # it must return quickly. If any long processing is needed, it should
   # be executed in a thread and stored to be fetched quickly by this call. 
   def shouldDisable(self):
+    if self.exception:
+      raise Exception("Test exception in sensor.shouldDisable()")
+
     return self.disable
 
   def getFactor(self):
+    if self.exception:
+      raise Exception("Test exception in sensor.getFactor()")
+
     return self.factor
 
 def sensorFactory(type, logger, config):

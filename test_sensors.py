@@ -80,3 +80,19 @@ def test_sh_scheduleSensorShouldDisable():
   cfg.schedules['sched4'].sensor.handler.disable = False
   time.sleep(5)
   assert valves['valve5'].openSeconds <= 5
+
+def test_sh_badSensor():
+  irrigate, logger, cfg, valves, q = init("test_config.yaml")
+  setStartTimeToNow(cfg, 'sched4', duration=0.1)
+  cfg.valves['valve1'].schedules.clear()
+  cfg.valves['valve2'].schedules.clear()
+  cfg.valves['valve3'].schedules.clear()
+  sensor = cfg.schedules['sched4'].sensor.handler
+  sensor.exception = False
+  irrigate.start()
+  sensor.exception = True
+  time.sleep(2)
+  assertValves(valves, ['valve5'], [(True, True)])
+  time.sleep(7)
+  assertValves(valves, ['valve5'], [(False, False)])
+  assert valves['valve5'].openSeconds >= 5
