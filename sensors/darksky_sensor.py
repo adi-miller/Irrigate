@@ -12,6 +12,7 @@ class DarkskySensor:
     self.lat = config['latitude']
     self.lon = config['longitude']
     self.updateInterval = config['updateinterval']
+    self.probabilityThreshold = config['probabilityThreshold']
     self.started = False
 
   def start(self):
@@ -28,32 +29,39 @@ class DarkskySensor:
   def updaterThread(self):
     while True:
       self.logger.info("Updating Darkysky data...")
+      dateNow = datetime.now()
       # Get forecast
-      self.uv, self.precip, self.precipProbability = self.getDailyObj(int(time.mktime(datetime.now().timetuple())))
+      self.uv, self.precip, self.precipProbability = self.getDailyObj(int(time.mktime(dateNow.timetuple())))
+      self.logger.debug("Daily precip (%s): %s. Probability: %s" % (dateNow.strftime("%c"), self.precip, self.precipProbability))
 
       # Get recent
-      self.precipRecently = 0
-      for i in range(1, 3):
-        day = (datetime.now() - timedelta(i)).date()
-        aTime = int(time.mktime(day.timetuple()))
+      self.recentPrecip = 0
+      for i in range(3):
+        day = dateNow - timedelta(i+1)
+        aTime = int(time.mktime(day.date().timetuple()))
         uv, precip, precipProbability = self.getDailyObj(aTime)
-        self.precipRecently = self.precipRecently + precip 
+        self.logger.debug("Recent precip (%s): %s. Probability: %s" % (day.strftime("%c"), precip, precipProbability))
+        if precipProbability >= self.probabilityThreshold:
+          self.recentPrecip = self.recentPrecip + precip
 
-      self.logger.debug("Daily UV: %s. Daily Precip: %s. Precip probability: %s. Recent Precip: %s" % (self.uv, self.precip, self.precipProbability, self.precipRecently))
+      self.logger.info("Daily UV: %s. Daily Precip (%s): %s. Recent Precip: %s" % \
+        (self.uv, dateNow.strftime("%c"), self.precip, self.recentPrecip))
       time.sleep(self.updateInterval*60)
 
   def getDailyObj(self, aTime):
-    url = "https://api.darksky.net/forecast/%s/%s,%s,%s?units=auto" % (self.apiKey, self.lat, self.lon, aTime)
-    self.logger.debug("Performing Darksky HTTP request: '%s'" % url)
-    for retry in range(1, 3):
+    urlPattern = "https://api.darksky.net/forecast/%s/%s,%s,%s?units=auto"
+    url = urlPattern % (self.apiKey, self.lat, self.lon, aTime)
+    urlLog = urlPattern % ("<redacted>", "<redacted>", "<redacted>", aTime)
+    self.logger.debug("Performing Darksky HTTP request: '%s'" % urlLog)
+    for retry in range(1, 4):
       try:
         response = requests.get(url)
         break
       except:
-        self.logger.error("Error calling Darksky in attempt #'%s'..." % retry)
-        time.sleep(2*retry)
+        self.logger.error("Error calling Darksky... Attempt #%s..." % retry)
+        time.sleep(2 * retry)
     else:
-      self.logger.error("Failed calling Darksky! Sensor is not functioning.")
+      self.logger.error("Failed calling Darksky.")
       return 0, 0, 0
 
     daily = response.json()['daily']['data'][0]
@@ -65,7 +73,7 @@ class DarkskySensor:
 
   def shouldDisable(self):
     # Disable if it is likely to rain today
-    if self.precipProbability > 0.5 and self.precip > 0.1:
+    if self.precip > 0.9 and self.precipProbability >= self.probabilityThreshold:
       return True
 
     # Disable if it rained recently 

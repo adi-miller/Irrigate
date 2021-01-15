@@ -92,4 +92,5 @@ sensors:
     apikey: <darksky_apikey>
     latitude: 32.156835
     longitude: 34.805154
+    probabilityThreshold: 0.0
     updateinterval: 240
