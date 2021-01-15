@@ -86,6 +86,8 @@ class Mqtt:
         valves[valveName].suspended = True
       else:
         self.logger.warning("Invalid payload received in topic %s = '%s'" % (topic, payload))
+        return
+      self.logger.info("Suspend set to '%s' for valve '%s' via MQTT command" % (valves[valveName].suspended, valveName))
     if topicParts[1] == "enabled":
       if int(payload) == 0:
         valves[valveName].enabled = False

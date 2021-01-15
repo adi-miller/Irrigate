@@ -1,6 +1,7 @@
 import time
 from test_base import init
 from test_base import assertValves
+from test_base import setStartTimeToNow
 
 def test_sh_mqttOpen():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
@@ -100,3 +101,25 @@ def test_sh_mqttSuspend():
   irrigate.mqtt.processMessages("xxx/suspend/valve1/command", 0)
   time.sleep(3)
   assert duration < valves['valve1'].openSeconds
+
+def test_sh_sensorOverridesMqtt():
+  irrigate, logger, cfg, valves, q = init("test_config.yaml")
+  setStartTimeToNow(cfg, 'sched4')
+  cfg.valves['valve1'].schedules.clear()
+  cfg.valves['valve2'].schedules.clear()
+  cfg.valves['valve3'].schedules.clear()
+  cfg.schedules['sched4'].sensor.handler.disable = True
+  irrigate.start()
+  time.sleep(3)
+  # Should be handled but not opened
+  assertValves(valves, ['valve5'], [(True, False)])
+
+  irrigate.mqtt.processMessages("xxx/suspend/valve5/command", 0)
+  time.sleep(3)
+  # Should not open because the sensor overrides
+  assertValves(valves, ['valve5'], [(True, False)])
+
+  cfg.schedules['sched4'].sensor.handler.disable = False
+  time.sleep(3)
+  # Should open because the sensor is now enabled and the MQTT command is already "lost"
+  assertValves(valves, ['valve5'], [(True, True)])

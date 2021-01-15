@@ -33,7 +33,7 @@ def test_sh_sensorFactor():
   assertValves(valves, ['valve5'], [(False, False)])
   assert valves['valve5'].openSeconds == 12
 
-def test_sh_sensorIgnoredOnMqtt():
+def test_sh_sensorIgnoredOnMqttOpen():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   cfg.valves['valve1'].schedules.clear()
   cfg.valves['valve2'].schedules.clear()
@@ -46,6 +46,20 @@ def test_sh_sensorIgnoredOnMqtt():
   time.sleep(3)
   assertValves(valves, ['valve5'], [(True, True)])
   cfg.schedules['sched4'].sensor.handler.disable = True
+  time.sleep(3)
+  assertValves(valves, ['valve5'], [(True, True)])
+
+def test_sh_mqttOpenOnSensorDisabled():
+  irrigate, logger, cfg, valves, q = init("test_config.yaml")
+  cfg.valves['valve1'].schedules.clear()
+  cfg.valves['valve2'].schedules.clear()
+  cfg.valves['valve3'].schedules.clear()
+  cfg.schedules['sched4'].sensor.handler.disable = True
+  irrigate.start()
+  time.sleep(3)
+  assertValves(valves, ['valve1', 'valve2', 'valve3', 'valve5'], [(False, False), (False, False), (False, False), (False, False)])
+  assert len(q.queue) == 0
+  irrigate.mqtt.processMessages("xxx/open/valve5/command", 1)
   time.sleep(3)
   assertValves(valves, ['valve5'], [(True, True)])
 

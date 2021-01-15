@@ -127,23 +127,23 @@ class Irrigate:
           duration = timedelta(minutes = irrigateJob.duration)
           currentOpen = 0
           initialOpen = valve.openSeconds
-          holdSuspended = valve.suspended
+          sensorDisabled = False
           openSince = None
           startTime = datetime.now()
           while startTime + duration > datetime.now():
             # The following two if statements needs to be together and first to prevent
             # the valve from opening if the sensor is disable. 
             if irrigateJob.sensor != None: 
-              shouldDisable = irrigateJob.sensor.handler.shouldDisable()
-              if (valve.suspended != shouldDisable):
-                valve.suspended = shouldDisable
-                self.logger.info("Sensor reported sensorDisabled = '%s'." % shouldDisable)
-            if not valve.open and not valve.suspended:
+              holdSensorDisabled = irrigateJob.sensor.handler.shouldDisable()
+              if holdSensorDisabled != sensorDisabled:
+                sensorDisabled = holdSensorDisabled
+                self.logger.info("Suspend set to '%s' for valve '%s' from sensor" % (sensorDisabled, valve.name))
+            if not valve.open and not valve.suspended and not sensorDisabled:
               valve.open = True
               openSince = datetime.now()
               self.logger.info("Irrigation valve '%s' opened." % (valve.name))
 
-            if valve.open and valve.suspended:
+            if valve.open and (valve.suspended or sensorDisabled):
               valve.open = False
               currentOpen = (datetime.now() - openSince).seconds
               openSince = None
@@ -172,7 +172,6 @@ class Irrigate:
             valve.open = False
             self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.openSeconds))
           valve.handled = False
-          valve.suspended = holdSuspended
         self.q.task_done();
       except queue.Empty:
         pass
@@ -194,8 +193,10 @@ class Irrigate:
                 if self.evalSched(valveSched, self.cfg.timezone):
                   jobDuration = valveSched.duration
                   if valveSched.sensor != None and valveSched.sensor.handler != None:
-                    jobDuration = jobDuration * valveSched.sensor.handler.getFactor()
-                    self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
+                    factor = valveSched.sensor.handler.getFactor()
+                    if factor != 1:
+                      jobDuration = jobDuration * factor
+                      self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
                   job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
                   self.queueJob(job)
         # Must not evaluate more than once a minute otherwise running jobs will get queued again
