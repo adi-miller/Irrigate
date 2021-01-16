@@ -247,7 +247,7 @@ class Irrigate:
       while True:
         time.sleep(self.cfg.telemetryInterval * 60)
         uptime = (datetime.now() - self.startTime).seconds // 60
-        self.mqtt.publish("/svc/uptime", 0)
+        self.mqtt.publish("/svc/uptime", uptime)
         for valve in self.valves:
           statusStr = "enabled"
           if not self.cfg.valves[valve].enabled:
