@@ -60,26 +60,34 @@ schedules:
 
 valves:
   valve1: 
+    type: test
     enabled: true
     schedules: 
       - sched1
   valve2: 
+    type: test
     enabled: true
     schedules: 
       - sched1
   valve3:
+    type: test
     enabled: true
     schedules: 
       - sched2
   valve4:
+    type: test
     enabled: false
     schedules: 
       - sched3
   valve5:
+    type: test
     enabled: true
     schedules: 
       - sched4
   valve6:
+    type: 3wire
+    gpioOn: 12
+    gpioOff: 13
     enabled: true
     schedules:
       - sched5

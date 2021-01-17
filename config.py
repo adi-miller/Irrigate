@@ -2,6 +2,7 @@ import yaml
 import model
 import sensors.sensors
 from sensors.sensors import sensorFactory
+from valves import valveFactory
 
 class Config:
   def __init__(self, logger, filename):
@@ -23,13 +24,19 @@ class Config:
       self.longitude = self.cfg['general']['longitude']
       self.telemetry = self.cfg['telemetry']['enabled']
       self.telemetryInterval = self.cfg['telemetry']['idleinterval']
+
     except KeyError as ex:
       logger.error("Mandatory configuration value '%s' missing." % format(ex))
       raise
 
-    self.sensors = self.initSensors()
-    self.schedules = self.initSchedules()
-    self.valves = self.initValves(self.schedules)
+    try:
+      self.sensors = self.initSensors()
+      self.schedules = self.initSchedules()
+      self.valves = self.initValves(self.schedules)
+    except Exception as ex:
+      logger.error("Failed to initialize configuration with error message '%s'. Aborting." % format(ex))
+      raise
+
 
   def getLatLon(self):
     return self.latitude, self.longitude
@@ -40,7 +47,8 @@ class Config:
     for valve in self.cfg['valves']:
       try:
         valveYaml = self.cfg['valves'][valve]
-        valveObj = model.Valve(valve)
+        valveType = valveYaml['type']
+        valveObj = model.Valve(valve, valveFactory(valveType, self.logger, valveYaml))
         valveObj.enabled = valveYaml['enabled']
         for sched in valveYaml['schedules']:
           valveObj.schedules[sched] = schedules[sched]

@@ -175,6 +175,7 @@ class Irrigate:
             if not valve.open and not valve.suspended and not sensorDisabled:
               valve.open = True
               openSince = datetime.now()
+              valve.handler.open()
               self.logger.info("Irrigation valve '%s' opened." % (valve.name))
 
             if valve.open and (valve.suspended or sensorDisabled):
@@ -184,6 +185,7 @@ class Irrigate:
               valve.openSeconds = initialOpen + currentOpen
               initialOpen = valve.openSeconds
               currentOpen = 0
+              valve.handler.close()
               self.logger.info("Irrigation valve '%s' closed." % (valve.name))
             if valve.open:
               currentOpen = (datetime.now() - openSince).seconds
@@ -204,6 +206,7 @@ class Irrigate:
             valve.openSeconds = initialOpen + currentOpen
           if valve.open:
             valve.open = False
+            valve.handler.close()
             self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.openSeconds))
           valve.handled = False
         self.q.task_done();

@@ -15,10 +15,10 @@ def test_schedSimple():
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
   assert len(q.queue) == 0
-  time.sleep(5)
+  time.sleep(6)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
-  assert valves['valve1'].openSeconds == 6
+  assert valves['valve1'].openSeconds >= 6
 
 def test_schedThirdWaiting():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
@@ -33,7 +33,7 @@ def test_schedThirdWaiting():
   time.sleep(60)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
   assert len(q.queue) == 1
-  time.sleep(10)
+  time.sleep(12)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (True, True)])
   assert len(q.queue) == 0
   time.sleep(10)
@@ -77,11 +77,12 @@ def test_schedOverlap():
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
   irrigate.start()
-  time.sleep(3)
+  time.sleep(5)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (False, False), (False, False)])
   assert len(q.queue) == 0
-  time.sleep(65)
+  time.sleep(10)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
+  time.sleep(65)
   assert valves['valve1'].openSeconds == 12
   assert len(q.queue) == 0
 

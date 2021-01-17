@@ -25,11 +25,11 @@ def test_sh_mqttOpenDisabled():
   cfg.valves['valve3'].schedules.clear()
   cfg.valves['valve1'].enabled = False
   irrigate.start()
-  time.sleep(3)
+  time.sleep(4)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
   irrigate.mqtt.processMessages("xxx/open/valve1/command", 1)
-  time.sleep(3)
+  time.sleep(4)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
 

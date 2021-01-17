@@ -1,5 +1,5 @@
 class Valve:
-  def __init__(self, name):
+  def __init__(self, name, handler):
     self.name = name
     self.enabled = True
     self.handled = False
@@ -7,6 +7,7 @@ class Valve:
     self.suspended = False
     self.openSeconds = 0
     self.schedules = {}
+    self.handler = handler
 
 class Schedule:
   def __init__(self, name, type, start, duration, days, seasons):

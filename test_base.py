@@ -4,11 +4,11 @@ import datetime
 from irrigate import Irrigate 
 from suntime import Sun
 
-def assertValves(valves, valveNames, status):
+def assertValves(valves, valveNames, status, assumption = None):
   ord = 0
   for valveName in valveNames:
-    assert valves[valveName].handled == status[ord][0]
-    assert valves[valveName].open == status[ord][1]
+    assert valves[valveName].handled == status[ord][0], assumption
+    assert valves[valveName].open == status[ord][1], assumption
     ord = ord + 1
 
 def setStartTimeToNow(cfg, sched, deltaInMinutes = None, duration = None):

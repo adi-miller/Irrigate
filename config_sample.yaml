@@ -15,14 +15,7 @@ telemetry:
   idleinterval: 10
 
 schedules:
-  # type: absolute, sunrise, sunset
-  # start:
-  #   When type is 'absolute' start denotes exact time. When type is 'sunrise' or 
-  #   'sunset' start denotes offset from sunrise / sunset. +00:10 means 10 minutes 
-  #   after, -00:15 means 15 minutes before. 
-  # duration: in minutes
   sunSummerSched: 
-    # All days of the week, for 20 minutes, at 06:10 am
     seasons: [Spring, Summer]
     days: [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
     type: sunrise 
@@ -30,7 +23,6 @@ schedules:
     duration: 15
     sensor: darkskySensor
   sunWinterSched: 
-    # All days of the week, for 20 minutes, at 06:10 am
     seasons: [Fall, Winter]
     days: [Sun, Mon, Tue, Wed, Thu, Fri, Sat]
     type: sunrise 
@@ -38,7 +30,6 @@ schedules:
     duration: 15
     sensor: darkskySensor
   shadeSched:
-    # On Sunday and Thursday, for 15 minutes, 10 minutes after sunrise. 
     seasons: [Spring, Summer, Fall, Winter]
     days: [Mon, Wed, Fri]
     type: sunrise
@@ -77,25 +68,30 @@ schedules:
 valves:
   valve1: 
     enabled: true
+    type: 3wire
     schedules: 
       - backLawnSummerSched
       - backLawnWinterSched
   valve2: 
     enabled: true
+    type: 3wire
     schedules: 
       - frontLawnSummerSched
       - frontLawnWinterSched
   valve3:
     enabled: true
+    type: 3wire
     schedules: 
       - shadeSched
   valve4:
     enabled: true
+    type: 3wire
     schedules: 
       - sunSummerSched
       - sunWinterSched
   valve5:
     enabled: true
+    type: 3wire
     schedules: 
       - sunSummerSched
       - sunWinterSched
