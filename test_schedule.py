@@ -18,7 +18,7 @@ def test_schedSimple():
   time.sleep(6)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
-  assert valves['valve1'].openSeconds >= 6
+  assert valves['valve1'].secondsDaily >= 6
 
 def test_schedThirdWaiting():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
@@ -65,7 +65,7 @@ def test_schedConflict():
   assert len(q.queue) == 0
   time.sleep(60)
   assert len(q.queue) == 0
-  assert valves['valve1'].openSeconds == 240
+  assert valves['valve1'].secondsDaily == 240
 
 def test_schedOverlap():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
@@ -83,7 +83,7 @@ def test_schedOverlap():
   time.sleep(10)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   time.sleep(65)
-  assert valves['valve1'].openSeconds == 12
+  assert valves['valve1'].secondsDaily == 12
   assert len(q.queue) == 0
 
 def test_schedDupCheck():

@@ -31,7 +31,7 @@ def test_sh_sensorFactor():
   assertValves(valves, ['valve5'], [(True, True)])
   time.sleep(15)
   assertValves(valves, ['valve5'], [(False, False)])
-  assert valves['valve5'].openSeconds == 12
+  assert valves['valve5'].secondsDaily == 12
 
 def test_sh_sensorIgnoredOnMqttOpen():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
@@ -79,7 +79,7 @@ def test_sh_scheduleSensorShouldDisable():
   assertValves(valves, ['valve4', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   cfg.schedules['sched4'].sensor.handler.disable = False
   time.sleep(5)
-  assert valves['valve5'].openSeconds <= 5
+  assert valves['valve5'].secondsDaily <= 5
 
 def test_sh_badSensor():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
@@ -95,4 +95,4 @@ def test_sh_badSensor():
   assertValves(valves, ['valve5'], [(True, True)])
   time.sleep(7)
   assertValves(valves, ['valve5'], [(False, False)])
-  assert valves['valve5'].openSeconds >= 5
+  assert valves['valve5'].secondsDaily >= 5

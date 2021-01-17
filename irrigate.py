@@ -57,8 +57,8 @@ class Irrigate:
         except Exception as ex:
           self.logger.error("Error starting sensor '%s': '%s'." % (sch.sensor.type, format(ex)))
 
-    self.logger.info("Starting scheduler thread '%s'." % self.sched.getName())
-    self.sched.start()
+    self.logger.info("Starting timer thread '%s'." % self.timer.getName())
+    self.timer.start()
     self.logger.info("Starting telemetry thread '%s'." % self.telemetry.getName())
     self.telemetry.start()
 
@@ -70,21 +70,21 @@ class Irrigate:
   def createThreads(self):
     self.workers = []
     for i in range(self.cfg.valvesConcurrency):
-      worker = Thread(target=self.irrigationHandler, args=())
+      worker = Thread(target=self.valveThread, args=())
       worker.setDaemon(False)
       worker.setName("ValveTh%s" % i)
       self.workers.append(worker)
 
-    self.sched = Thread(target=self.schedulerThread, args=())
-    self.sched.setDaemon(True)
-    self.sched.setName("SchedTh")
+    self.timer = Thread(target=self.timerThread, args=())
+    self.timer.setDaemon(True)
+    self.timer.setName("TimerTh")
 
     if self.cfg.telemetry:
-      self.telemetry = Thread(target=self.telemetryHander, args=())
+      self.telemetry = Thread(target=self.telemetryThread, args=())
       self.telemetry.setDaemon(True)
       self.telemetry.setName("TelemTh")
 
-  def evalSched(self, sched, timezone):
+  def evalSched(self, sched, timezone, now):
     todayStr = calendar.day_abbr[datetime.today().weekday()]
     if not todayStr in sched.days:
       return False
@@ -101,9 +101,9 @@ class Irrigate:
     else:
       sun = Sun(lat, lon)
       if sched.type == 'sunrise':
-        startTime = sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
+        startTime = sun.get_local_sunrise_time().replace(second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
       elif sched.type == 'sunset':
-        startTime = sun.get_local_sunset_time().replace(tzinfo=pytz.timezone(timezone))
+        startTime = sun.get_local_sunset_time().replace(second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
 
     if hours[0] == '+':
       hours = hours[1:]
@@ -112,7 +112,6 @@ class Irrigate:
       hours = hours[1:]
       startTime = startTime - timedelta(hours=int(hours), minutes=int(minutes))
 
-    now = datetime.now().replace(tzinfo=pytz.timezone(timezone), second=0, microsecond=0)
     if startTime == now:
       return True
 
@@ -142,7 +141,7 @@ class Irrigate:
 
     return season
 
-  def irrigationHandler(self):
+  def valveThread(self):
     while not self.terminated:
       try:
         irrigateJob = self.q.get(timeout=5)
@@ -155,8 +154,8 @@ class Irrigate:
           valve.handled = True
           self.logger.info("Irrigation cycle start for valve '%s' for %s minutes." % (valve.name, irrigateJob.duration))
           duration = timedelta(minutes = irrigateJob.duration)
-          currentOpen = 0
-          initialOpen = valve.openSeconds
+          valve.secondsLast = 0
+          initialOpen = valve.secondsDaily
           sensorDisabled = False
           openSince = None
           startTime = datetime.now()
@@ -180,16 +179,16 @@ class Irrigate:
 
             if valve.open and (valve.suspended or sensorDisabled):
               valve.open = False
-              currentOpen = (datetime.now() - openSince).seconds
+              valve.secondsLast = (datetime.now() - openSince).seconds
               openSince = None
-              valve.openSeconds = initialOpen + currentOpen
-              initialOpen = valve.openSeconds
-              currentOpen = 0
+              valve.secondsDaily = initialOpen + valve.secondsLast
+              initialOpen = valve.secondsDaily
+              valve.secondsLast = 0
               valve.handler.close()
               self.logger.info("Irrigation valve '%s' closed." % (valve.name))
             if valve.open:
-              currentOpen = (datetime.now() - openSince).seconds
-              valve.openSeconds = initialOpen + currentOpen
+              valve.secondsLast = (datetime.now() - openSince).seconds
+              valve.secondsDaily = initialOpen + valve.secondsLast
             if valve.enabled == False:
               self.logger.info("Valve '%s' disabled. Terminating irrigation cycle." % (valve.name))
               break
@@ -197,17 +196,19 @@ class Irrigate:
               self.logger.warning("Program exiting. Terminating irrigation cycle for valve '%s'..." % (valve.name))
               break
 
-            self.logger.debug("Irrigation valve '%s' currentOpen = %s seconds. totalOpen = %s." % (valve.name, currentOpen, valve.openSeconds))
+            valve.secondsRemain = ((startTime + duration) - datetime.now()).seconds
+            self.logger.debug("Irrigation valve '%s' Last Open = %ss. Remaining = %ss. Daily Total = %ss." \
+              % (valve.name, valve.secondsLast, valve.secondsRemain, valve.secondsDaily))
             time.sleep(1)
 
           self.logger.info("Irrigation cycle ended for valve '%s'." % (valve.name))
           if valve.open and not valve.suspended:
-            currentOpen = (datetime.now() - openSince).seconds
-            valve.openSeconds = initialOpen + currentOpen
+            valve.secondsLast = (datetime.now() - openSince).seconds
+            valve.secondsDaily = initialOpen + valve.secondsLast
           if valve.open:
             valve.open = False
             valve.handler.close()
-            self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.openSeconds))
+            self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.secondsDaily))
           valve.handled = False
         self.q.task_done();
       except queue.Empty:
@@ -220,14 +221,20 @@ class Irrigate:
     else:
       self.logger.info("Valve '%s' adhoc job queued. Duration %s minutes." % (job.valve.name, job.duration))
 
-  def schedulerThread(self):
+  def timerThread(self):
     try:
       while True:
+        now = datetime.now().replace(tzinfo=pytz.timezone(self.cfg.timezone), second=0, microsecond=0)
+
+        if now.hour == 0 and now.minute == 0:
+          for aValve in self.valves.values():
+            aValve.secondsDaily = 0
+
         for aValve in self.valves.values():
           if aValve.enabled:
             if aValve.schedules != None:
               for valveSched in aValve.schedules.values():
-                if self.evalSched(valveSched, self.cfg.timezone):
+                if self.evalSched(valveSched, self.cfg.timezone, now):
                   jobDuration = valveSched.duration
                   if valveSched.sensor != None and valveSched.sensor.handler != None and valveSched.sensor.handler.started:
                     try:
@@ -239,33 +246,38 @@ class Irrigate:
                       self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
                   job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
                   self.queueJob(job)
-        # Must not evaluate more than once a minute otherwise running jobs will get queued again
+        # Must not evaluate more or less than once every minute otherwise running jobs will get queued again
         time.sleep(60)
     except Exception as ex:
-      self.logger.error("Scheduler thread exited with error '%s'. Terminating Irrigate!" % format(ex))
+      self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
 
-  def telemetryHander(self):
+  def telemetryThread(self):
     try:
       while True:
         time.sleep(self.cfg.telemetryInterval * 60)
         uptime = (datetime.now() - self.startTime).seconds // 60
         self.mqtt.publish("/svc/uptime", uptime)
         for valve in self.valves:
-          statusStr = "enabled"
-          if not self.cfg.valves[valve].enabled:
-            statusStr = "disabled"
-          elif self.cfg.valves[valve].suspended:
-            statusStr = "suspended"
-          elif self.cfg.valves[valve].open:
-            statusStr = "open"
-          if self.cfg.mqttEnabled:
-            self.mqtt.publish(valve+"/status", statusStr)
-            self.mqtt.publish(valve+"/duration", self.cfg.valves[valve].openSeconds)
+          self.telemetryValve(valve)
     except Exception as ex:
       self.logger.error("Telemetry thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
           
+  def telemetryValve(self, valveName):
+    valve = self.cfg.valves[valveName]
+    statusStr = "enabled"
+    if not valve.enabled:
+      statusStr = "disabled"
+    elif valve.suspended:
+      statusStr = "suspended"
+    elif valve.open:
+      statusStr = "open"
+    self.mqtt.publish(valveName+"/status", statusStr)
+    self.mqtt.publish(valveName+"/dailytotal", valve.secondsDaily)
+    if valve.open:
+      self.mqtt.publish(valveName+"/secondsLast", valve.secondsLast)
+      self.mqtt.publish(valveName+"/remaining", valve.secondsRemain)
 
   def getLogger(self):
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',

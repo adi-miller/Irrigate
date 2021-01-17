@@ -13,6 +13,7 @@ mqtt:
 telemetry:
   enabled: true
   idleinterval: 10
+  activeinterval: 1
 
 schedules:
   # type: absolute, sunrise, sunset

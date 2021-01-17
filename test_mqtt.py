@@ -95,12 +95,12 @@ def test_sh_mqttSuspend():
   time.sleep(2)
   irrigate.mqtt.processMessages("xxx/suspend/valve1/command", 1)
   time.sleep(1)
-  duration = valves['valve1'].openSeconds
+  duration = valves['valve1'].secondsDaily
   time.sleep(3)
-  assert duration == valves['valve1'].openSeconds
+  assert duration == valves['valve1'].secondsDaily
   irrigate.mqtt.processMessages("xxx/suspend/valve1/command", 0)
   time.sleep(3)
-  assert duration < valves['valve1'].openSeconds
+  assert duration < valves['valve1'].secondsDaily
 
 def test_sh_sensorOverridesMqtt():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")

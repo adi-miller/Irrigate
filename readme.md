@@ -12,7 +12,7 @@ Copy config_sample.yaml to config.yaml and edit to match your location and prefe
 
 ## Instructions
 
-- Valve `suspend` works while working and doesn't cancel the job. Suspension can be observed by examining openSeconds
+- Valve `suspend` works while working and doesn't cancel the job. Suspension can be observed by examining secondsDaily
 - Valve `enable` is tested before
 
 ## Operation

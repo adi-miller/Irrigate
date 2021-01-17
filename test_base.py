@@ -51,7 +51,7 @@ def test_suspendInTheMiddle():
   time.sleep(7)
   valves['valve1'].suspended = False
   time.sleep(3)
-  assert valves['valve1'].openSeconds < 8
+  assert valves['valve1'].secondsDaily < 8
   assert len(q.queue) == 0
 
 def test_suspendedFromStart():
@@ -69,7 +69,7 @@ def test_suspendedFromStart():
   valves['valve1'].suspended = False
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (False, False), (False, False)])
-  assert valves['valve1'].openSeconds < 4
+  assert valves['valve1'].secondsDaily < 4
 
 def test_sunset():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
