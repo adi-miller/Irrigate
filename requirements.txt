@@ -3,3 +3,4 @@ suntime
 pytz
 paho-mqtt
 requests
+RPi.GPIO
