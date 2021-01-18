@@ -154,3 +154,15 @@ def xtest_terminate():
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2'], [(False, False), (False, False)])
 
+def test_everyXMinutes():
+  irrigate, logger, cfg, valves, q = init("test_config.yaml")
+  test1 = 0
+  test2 = 0
+  for i in range(13):
+    if irrigate.everyXMinutes("test1", 0.05, False):
+      test1 += 1
+    if irrigate.everyXMinutes("test2", 0.2, True):
+      test2 += 1
+    time.sleep(1)
+  assert test1 == 4
+  assert test2 == 2

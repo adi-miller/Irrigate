@@ -13,11 +13,11 @@ class BaseValve():
 class TestValve(BaseValve):
   def open(self):
     BaseValve.open(self)
-    time.sleep(1)
+    time.sleep(0.5)
 
   def close(self):
     BaseValve.close(self)
-    time.sleep(1)
+    time.sleep(0.5)
 
 class ThreeWireValve(BaseValve):
   def __init__(self, logger):

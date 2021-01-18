@@ -52,7 +52,7 @@ def test_schedConflict():
   assertValves(valves, ['valve1'], [(False, False)])
   assert len(q.queue) == 0
   irrigate.start()
-  time.sleep(3)
+  time.sleep(5)
   assertValves(valves, ['valve1'], [(True, True)])
   time.sleep(60)
   assertValves(valves, ['valve1'], [(True, True)])

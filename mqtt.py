@@ -61,14 +61,14 @@ class Mqtt:
     self.processMessages(msg.topic, msg.payload)
 
   def publish(self, topic, payload):
-    if not self.mqttStarted:
-      return
-
     topicPrefix = str(self.cfg.mqttClientName)
     if not topic.startswith("/"):
       topicPrefix = topicPrefix + "/raspi/"
-    self.mqttClient.publish(topicPrefix + topic, payload)
-    self.logger.debug("MQTT message sent for topic '%s' payload '%s'." % (topicPrefix + topic, payload))
+    if self.mqttStarted:
+      self.mqttClient.publish(topicPrefix + topic, payload)
+      self.logger.debug("MQTT message published for topic '%s' payload '%s'." % (topicPrefix + topic, payload))
+    else:
+      self.logger.debug("MQTT disabled. Message for topic '%s' payload '%s' not published." % (topicPrefix + topic, payload))
 
   def processMessages(self, topic, payload):
     self.logger.debug("MQTT message received on topic '%s' payload '%s'." % (topic, payload))

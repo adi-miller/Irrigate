@@ -23,7 +23,8 @@ class Config:
       self.latitude = self.cfg['general']['latitude']
       self.longitude = self.cfg['general']['longitude']
       self.telemetry = self.cfg['telemetry']['enabled']
-      self.telemetryInterval = self.cfg['telemetry']['idleinterval']
+      self.telemIdleInterval = self.cfg['telemetry']['idleinterval']
+      self.telemActiveInterval = self.cfg['telemetry']['activeinterval']
 
     except KeyError as ex:
       logger.error("Mandatory configuration value '%s' missing." % format(ex))

@@ -13,6 +13,7 @@ mqtt:
 telemetry:
   enabled: true
   idleinterval: 10
+  activeinterval: 0.05 # Every 3 seconds
 
 schedules:
   sunSummerSched: 

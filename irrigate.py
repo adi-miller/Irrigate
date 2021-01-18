@@ -34,6 +34,7 @@ class Irrigate:
     self.terminated = False
     self.mqtt = Mqtt(self)
     self.createThreads()
+    self._intervalDict = {}
 
   def start(self, test = True):
     if self.cfg.mqttEnabled:
@@ -59,8 +60,6 @@ class Irrigate:
 
     self.logger.info("Starting timer thread '%s'." % self.timer.getName())
     self.timer.start()
-    self.logger.info("Starting telemetry thread '%s'." % self.telemetry.getName())
-    self.telemetry.start()
 
   def init(self, cfgFilename):
     self.cfg = config.Config(self.logger, cfgFilename)
@@ -78,11 +77,6 @@ class Irrigate:
     self.timer = Thread(target=self.timerThread, args=())
     self.timer.setDaemon(True)
     self.timer.setName("TimerTh")
-
-    if self.cfg.telemetry:
-      self.telemetry = Thread(target=self.telemetryThread, args=())
-      self.telemetry.setDaemon(True)
-      self.telemetry.setName("TelemTh")
 
   def evalSched(self, sched, timezone, now):
     todayStr = calendar.day_abbr[datetime.today().weekday()]
@@ -170,7 +164,6 @@ class Irrigate:
                   self.logger.info("Suspend set to '%s' for valve '%s' from sensor" % (sensorDisabled, valve.name))
               except Exception as ex:
                 self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.type, format(ex)))
-
             if not valve.open and not valve.suspended and not sensorDisabled:
               valve.open = True
               openSince = datetime.now()
@@ -221,6 +214,17 @@ class Irrigate:
     else:
       self.logger.info("Valve '%s' adhoc job queued. Duration %s minutes." % (job.valve.name, job.duration))
 
+  def everyXMinutes(self, key, interval, bootstrap):
+    if not key in self._intervalDict.keys():
+      self._intervalDict[key] = datetime.now()
+      return bootstrap
+
+    if datetime.now() >= self._intervalDict[key] + timedelta(minutes=interval):
+      self._intervalDict[key] = datetime.now()
+      return True
+
+    return False
+
   def timerThread(self):
     try:
       while True:
@@ -230,42 +234,42 @@ class Irrigate:
           for aValve in self.valves.values():
             aValve.secondsDaily = 0
 
-        for aValve in self.valves.values():
-          if aValve.enabled:
-            if aValve.schedules != None:
-              for valveSched in aValve.schedules.values():
-                if self.evalSched(valveSched, self.cfg.timezone, now):
-                  jobDuration = valveSched.duration
-                  if valveSched.sensor != None and valveSched.sensor.handler != None and valveSched.sensor.handler.started:
-                    try:
-                      factor = valveSched.sensor.handler.getFactor()
-                      if factor != 1:
-                        jobDuration = jobDuration * factor
-                        self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
-                    except Exception as ex:
-                      self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
-                  job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
-                  self.queueJob(job)
-        # Must not evaluate more or less than once every minute otherwise running jobs will get queued again
-        time.sleep(60)
+        if self.everyXMinutes("idleInterval", self.cfg.telemIdleInterval, False) and self.cfg.telemetry:
+          uptime = (datetime.now() - self.startTime).seconds // 60
+          self.mqtt.publish("/svc/uptime", uptime)
+          for valve in self.valves.values():
+            self.telemetryValve(valve)
+
+        if self.everyXMinutes("activeinterval", self.cfg.telemActiveInterval, False) and self.cfg.telemetry:
+          for valve in self.valves.values():
+            if valve.handled:
+              self.telemetryValve(valve)
+
+        if self.everyXMinutes("scheduler", 1, True):
+          # Must not evaluate more or less than once every minute otherwise running jobs will get queued again
+          for aValve in self.valves.values():
+            if aValve.enabled:
+              if aValve.schedules != None:
+                for valveSched in aValve.schedules.values():
+                  if self.evalSched(valveSched, self.cfg.timezone, now):
+                    jobDuration = valveSched.duration
+                    if valveSched.sensor != None and valveSched.sensor.handler != None and valveSched.sensor.handler.started:
+                      try:
+                        factor = valveSched.sensor.handler.getFactor()
+                        if factor != 1:
+                          jobDuration = jobDuration * factor
+                          self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
+                      except Exception as ex:
+                        self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
+                    job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
+                    self.queueJob(job)
+  
+        time.sleep(1)
     except Exception as ex:
       self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
 
-  def telemetryThread(self):
-    try:
-      while True:
-        time.sleep(self.cfg.telemetryInterval * 60)
-        uptime = (datetime.now() - self.startTime).seconds // 60
-        self.mqtt.publish("/svc/uptime", uptime)
-        for valve in self.valves:
-          self.telemetryValve(valve)
-    except Exception as ex:
-      self.logger.error("Telemetry thread exited with error '%s'. Terminating Irrigate!" % format(ex))
-      self.terminated = True
-          
-  def telemetryValve(self, valveName):
-    valve = self.cfg.valves[valveName]
+  def telemetryValve(self, valve):
     statusStr = "enabled"
     if not valve.enabled:
       statusStr = "disabled"
@@ -273,11 +277,11 @@ class Irrigate:
       statusStr = "suspended"
     elif valve.open:
       statusStr = "open"
-    self.mqtt.publish(valveName+"/status", statusStr)
-    self.mqtt.publish(valveName+"/dailytotal", valve.secondsDaily)
+    self.mqtt.publish(valve.name+"/status", statusStr)
+    self.mqtt.publish(valve.name+"/dailytotal", valve.secondsDaily)
     if valve.open:
-      self.mqtt.publish(valveName+"/secondsLast", valve.secondsLast)
-      self.mqtt.publish(valveName+"/remaining", valve.secondsRemain)
+      self.mqtt.publish(valve.name+"/secondsLast", valve.secondsLast)
+      self.mqtt.publish(valve.name+"/remaining", valve.secondsRemain)
 
   def getLogger(self):
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',
