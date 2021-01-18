@@ -71,27 +71,37 @@ class Mqtt:
       self.logger.debug("MQTT disabled. Message for topic '%s' payload '%s' not published." % (topicPrefix + topic, payload))
 
   def processMessages(self, topic, payload):
-    self.logger.debug("MQTT message received on topic '%s' payload '%s'." % (topic, payload))
-    topicParts = topic.split("/")
-    valveName = topicParts[2]
+    self.logger.debug("MQTT message received for topic '%s' payload '%s'." % (topic, payload))
+    try:
+      topicParts = topic.split("/")
+      valveName = topicParts[2]
 
-    valves = self.valves
+      valves = self.valves
 
-    if topicParts[1] == "open":
-      self.irrigate.queueJob(model.Job(valve = valves[valveName], sched = None, duration = payload))
-    if topicParts[1] == "suspend":
-      if int(payload) == 0:
-        valves[valveName].suspended = False
-      elif int(payload) == 1:
-        valves[valveName].suspended = True
-      else:
-        self.logger.warning("Invalid payload received in topic %s = '%s'" % (topic, payload))
+      if topicParts[1] == "open":
+        self.irrigate.queueJob(model.Job(valve = valves[valveName], sched = None, duration = float(payload)))
         return
-      self.logger.info("Suspend set to '%s' for valve '%s' via MQTT command" % (valves[valveName].suspended, valveName))
-    if topicParts[1] == "enabled":
-      if int(payload) == 0:
-        valves[valveName].enabled = False
-      elif int(payload) == 1:
-        valves[valveName].enabled = True
-      else:
-        self.logger.warning("Invalid payload received in topic %s = '%s'" % (topic, payload))
+
+      if topicParts[1] == "suspend":
+        if int(payload) == 0:
+          valves[valveName].suspended = False
+          self.logger.info("Un-suspended valve '%s' via MQTT command" % valveName)
+          return
+        elif int(payload) == 1:
+          valves[valveName].suspended = True
+          self.logger.info("Suspended valve '%s' via MQTT command" % valveName)
+          return
+
+      if topicParts[1] == "enabled":
+        if int(payload) == 0:
+          valves[valveName].enabled = False
+          self.logger.info("Disabled valve '%s' via MQTT command" % valveName)
+          return
+        elif int(payload) == 1:
+          valves[valveName].enabled = True
+          self.logger.info("Enabled valve '%s' via MQTT command" % valveName)
+          return
+
+      self.logger.warning("Invalid payload received for topic %s = '%s'" % (topic, payload))
+    except Exception as ex:
+      self.logger.error("Error parsing payload received for topic %s = '%s'" % (topic, payload))

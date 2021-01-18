@@ -123,3 +123,32 @@ def test_sh_sensorOverridesMqtt():
   time.sleep(3)
   # Should open because the sensor is now enabled and the MQTT command is already "lost"
   assertValves(valves, ['valve5'], [(True, True)])
+
+def test_sh_mqttErrors():
+  irrigate, logger, cfg, valves, q = init("test_config.yaml")
+  setStartTimeToNow(cfg, 'sched1', duration=0.5)
+  setStartTimeToNow(cfg, 'sched2', deltaInMinutes=10)
+  assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
+  assert len(q.queue) == 0
+  irrigate.start()
+  time.sleep(2)
+  irrigate.mqtt.processMessages("xxx/suspend/valve1/command", "asd")
+  time.sleep(1)
+  irrigate.mqtt.processMessages("xxx/open/valve1/command", "asd")
+  time.sleep(1)
+  irrigate.mqtt.processMessages("xxx/enable/valve1/command", "")
+  time.sleep(1)
+  irrigate.mqtt.processMessages("xxx/suspend/valve1/command", 4)
+  time.sleep(1)
+  irrigate.mqtt.processMessages("xxx/enable/valve1/command", 4)
+  time.sleep(1)
+  irrigate.mqtt.processMessages("xxx/enable/asd/command", 4)
+  time.sleep(1)
+  irrigate.mqtt.processMessages("xxx/enable/valve786/command", 4)
+  time.sleep(1)
+  irrigate.mqtt.processMessages("", "")
+  time.sleep(1)
+  irrigate.mqtt.processMessages("/", 4)
+  time.sleep(30)
+  assert valves['valve1'].secondsDaily == 30
+
