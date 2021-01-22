@@ -13,25 +13,27 @@ class Mqtt:
 
   def start(self):
     self.logger.info("Connecting to MQTT service '%s'..." % self.cfg.mqttHostName)
-    self.mqttClient = self.getMyMqtt()
+    try:
+      self.mqttClient = self.getMyMqtt()
 
-    topicPrefix = str(self.cfg.mqttClientName) + "/"
-    self.mqttClient.subscribe(topicPrefix + "open/+/command")
-    self.mqttClient.subscribe(topicPrefix + "suspend/+/command")
-    self.mqttClient.subscribe(topicPrefix + "enabled/+/command")
-    self.registerTopics(topicPrefix, "open")
-    self.mqttClient.on_message = self.on_message
+      topicPrefix = str(self.cfg.mqttClientName) + "/"
+      self.mqttClient.subscribe(topicPrefix + "open/+/command")
+      self.mqttClient.subscribe(topicPrefix + "suspend/+/command")
+      self.mqttClient.subscribe(topicPrefix + "enabled/+/command")
+      self.registerTopics(topicPrefix, "open")
+      self.mqttClient.on_message = self.on_message
 
-    worker = threading.Thread(target=self.mqttLooper, args=())
-    worker.setDaemon(True)
-    worker.start()
-    self.mqttStarted = True
-    self.logger.info("MQTT thread '%s' started." % worker.getName())
-    while not self.mqttClient.is_connected():
-      self.logger.info("Waiting for MQTT connection...")
-      time.sleep(1)
+      worker = threading.Thread(target=self.mqttLooper, args=())
+      worker.setDaemon(True)
+      worker.start()
+      while not self.mqttClient.is_connected():
+        self.logger.info("Waiting for MQTT connection...")
+        time.sleep(1)
+      self.mqttStarted = True
 
-    self.logger.info("MQTT connected: %s" % self.mqttClient.is_connected())
+      self.logger.info("MQTT connected: %s" % self.mqttClient.is_connected())
+    except Exception as ex:
+      self.logger.error("Error starting MQTT: %s" % format(ex))
 
   def registerTopics(self, topicPrefix, topic):
     topicStr = topicPrefix + topic + "/+/command"

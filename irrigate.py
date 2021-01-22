@@ -149,6 +149,7 @@ class Irrigate:
           self.logger.info("Irrigation cycle start for valve '%s' for %s minutes." % (valve.name, irrigateJob.duration))
           duration = timedelta(minutes = irrigateJob.duration)
           valve.secondsLast = 0
+          valve.secondsRemain = duration.seconds
           initialOpen = valve.secondsDaily
           sensorDisabled = False
           openSince = None
