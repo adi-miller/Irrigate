@@ -13,6 +13,9 @@ class RainSensor():
   def getFactor(self):
     return 1
 
+  def getTelemetry(self):
+    pass
+
 class UvSensor():
   def __init__(self, logger):
     self.logger = logger
@@ -25,6 +28,9 @@ class UvSensor():
 
   def getFactor(self):
     return 1
+
+  def getTelemetry(self):
+    pass
 
 class TestSensor():
   def __init__(self, logger):
@@ -59,6 +65,13 @@ class TestSensor():
       raise Exception("Test exception in sensor.getFactor()")
 
     return self.factor
+
+  def getTelemetry(self):
+    testTelemetry = []
+    testTelemetry["num/value"] = 42
+    testTelemetry["color"] = "black"
+    testTelemetry["bool/value"] = True
+    return testTelemetry
 
 def sensorFactory(type, logger, config):
   if type == 'rain':

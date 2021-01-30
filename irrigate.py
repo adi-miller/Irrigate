@@ -241,6 +241,18 @@ class Irrigate:
           for valve in self.valves.values():
             self.telemetryValve(valve)
 
+          sensors = {}
+          for sch in self.cfg.schedules.values():
+            if sch.sensor != None and sch.sensor.handler != None and sch.sensor.handler.started:
+              sensors[sch.sensor.type] = sch.sensor.handler
+
+          for sensor in sensors.keys():
+            telem = sensors[sensor].getTelemetry()
+            if telem != None:
+              for t in telem.keys():
+                prefix = "sensor/" + sensor + "/"
+                self.mqtt.publish(prefix + t, telem[t])
+  
         if self.everyXMinutes("activeinterval", self.cfg.telemActiveInterval, False) and self.cfg.telemetry:
           for valve in self.valves.values():
             if valve.handled:

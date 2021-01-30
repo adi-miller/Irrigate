@@ -74,7 +74,6 @@ class DarkskySensor:
       self.logger.error("Error parsing Darksky response: %s." % format(ex))
       return 0, 0, 0
 
-
   def shouldDisable(self):
     # Disable if it is likely to rain today
     if self.precip > 0.9 and self.precipProbability >= self.probabilityThreshold:
@@ -97,3 +96,10 @@ class DarkskySensor:
       return 0.5
 
     return 1
+
+  def getTelemetry(self):
+    res = {}
+    res["uv"] = self.uv
+    res["precip"] = self.precip
+    res["recentPrecip"] = self.recentPrecip
+    return res

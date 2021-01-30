@@ -17,10 +17,9 @@ class Mqtt:
       self.mqttClient = self.getMyMqtt()
 
       topicPrefix = str(self.cfg.mqttClientName) + "/"
-      self.mqttClient.subscribe(topicPrefix + "open/+/command")
-      self.mqttClient.subscribe(topicPrefix + "suspend/+/command")
-      self.mqttClient.subscribe(topicPrefix + "enabled/+/command")
       self.registerTopics(topicPrefix, "open")
+      self.registerTopics(topicPrefix, "suspend")
+      self.registerTopics(topicPrefix, "enabled")
       self.mqttClient.on_message = self.on_message
 
       worker = threading.Thread(target=self.mqttLooper, args=())
