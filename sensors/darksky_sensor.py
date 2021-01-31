@@ -14,6 +14,7 @@ class DarkskySensor:
     self.updateInterval = config['updateinterval']
     self.probabilityThreshold = config['probabilityThreshold']
     self.started = False
+    self._sendTelemetry = False
 
   def start(self):
     if self.started:
@@ -46,6 +47,8 @@ class DarkskySensor:
 
       self.logger.info("Daily UV: %s. Daily Precip (%s): %s. Recent Precip: %s" % \
         (self.uv, dateNow.strftime("%c"), self.precip, self.recentPrecip))
+
+      self._sendTelemetry = True
       time.sleep(self.updateInterval*60)
 
   def getDailyObj(self, aTime):
@@ -99,7 +102,9 @@ class DarkskySensor:
 
   def getTelemetry(self):
     res = {}
-    res["uv"] = self.uv
-    res["precip"] = self.precip
-    res["recentPrecip"] = self.recentPrecip
+    if self._sendTelemetry:
+      res["uv"] = self.uv
+      res["precip"] = self.precip
+      res["recentPrecip"] = self.recentPrecip
+      self._sendTelemetry = False
     return res
