@@ -6,6 +6,7 @@ import queue
 import config
 import logging
 import calendar
+import threading
 from mqtt import Mqtt
 from suntime import Sun
 from datetime import datetime
@@ -19,11 +20,11 @@ def main(argv):
   irrigate = Irrigate(configFilename)
   irrigate.start(False)
   try:
-    while True:
+    while not irrigate.terminated:
       time.sleep(1)
   except KeyboardInterrupt:
-    irrigate.logger.info("Program terminated. Waiting for all threads to finish...")
     irrigate.terminated = True
+  irrigate.logger.info("Program terminated. Waiting for all threads to finish...")
 
 class Irrigate:
   def __init__(self, configFilename):
@@ -35,6 +36,7 @@ class Irrigate:
     self.mqtt = Mqtt(self)
     self.createThreads()
     self._intervalDict = {}
+    self.sensors = {}
 
   def start(self, test = True):
     if self.cfg.mqttEnabled:
@@ -55,6 +57,7 @@ class Irrigate:
           if not sensorHandler.started:
             self.logger.info("Starting sensor '%s'." % format(sensorHandler))
             sensorHandler.start()
+            self.sensors[sch.sensor.type] = sensorHandler
         except Exception as ex:
           self.logger.error("Error starting sensor '%s': '%s'." % (sch.sensor.type, format(ex)))
 
@@ -207,6 +210,7 @@ class Irrigate:
         self.q.task_done();
       except queue.Empty:
         pass
+    self.logger.warning("Valve handler thread '%s' exited." % threading.currentThread().getName())
 
   def queueJob(self, job):
     self.q.put(job)
@@ -241,17 +245,8 @@ class Irrigate:
           for valve in self.valves.values():
             self.telemetryValve(valve)
 
-          sensors = {}
-          for sch in self.cfg.schedules.values():
-            if sch.sensor != None and sch.sensor.handler != None and sch.sensor.handler.started:
-              sensors[sch.sensor.type] = sch.sensor.handler
-
-          for sensor in sensors.keys():
-            telem = sensors[sensor].getTelemetry()
-            if telem != None:
-              for t in telem.keys():
-                prefix = "sensor/" + sensor + "/"
-                self.mqtt.publish(prefix + t, telem[t])
+          for sensor in self.sensors.keys():
+            self.telemetrySensor(sensor, self.sensors[sensor])
   
         if self.everyXMinutes("activeinterval", self.cfg.telemActiveInterval, False) and self.cfg.telemetry:
           for valve in self.valves.values():
@@ -292,9 +287,27 @@ class Irrigate:
       statusStr = "open"
     self.mqtt.publish(valve.name+"/status", statusStr)
     self.mqtt.publish(valve.name+"/dailytotal", valve.secondsDaily)
+    self.mqtt.publish(valve.name+"/remaining", valve.secondsRemain)
     if valve.open:
       self.mqtt.publish(valve.name+"/secondsLast", valve.secondsLast)
-      self.mqtt.publish(valve.name+"/remaining", valve.secondsRemain)
+
+  def telemetrySensor(self, name, sensor):
+    prefix = "sensor/" + name + "/"
+    statusStr = "Enabled"
+    try:
+      if sensor.shouldDisable():
+        statusStr = "Disabled"
+      elif sensor.getFactor() != 1:
+        statusStr = "Factored"
+      self.mqtt.publish(prefix + "factor", sensor.getFactor())
+      telem = sensor.getTelemetry()
+      if telem != None:
+        for t in telem.keys():
+          self.mqtt.publish(prefix + t, telem[t])
+    except Exception as ex:
+      statusStr = "Error"
+    self.mqtt.publish(prefix + "status", statusStr)
+
 
   def getLogger(self):
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',

@@ -6,6 +6,7 @@ class Valve:
     self.open = False
     self.suspended = False
     self.secondsDaily = 0
+    self.secondsRemain = 0
     self.schedules = {}
     self.handler = handler
 

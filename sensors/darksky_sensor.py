@@ -80,7 +80,7 @@ class DarkskySensor:
       return True
 
     # Disable if it rained recently 
-    if self.precipRecently > 1:
+    if self.recentPrecip > 1:
       return True
 
     return False
@@ -92,7 +92,7 @@ class DarkskySensor:
     if self.uv <= 3:
       return 0.5
 
-    if self.precipRecently > 0.3:
+    if self.recentPrecip > 0.3:
       return 0.5
 
     return 1
