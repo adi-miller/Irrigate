@@ -1,0 +1,12 @@
+[Unit]
+Description=Irrigate
+After=multi-user.target
+
+[Service]
+KillSignal=SIGINT
+Type=idle
+WorkingDirectory=/home/pi/Irrigate/
+ExecStart=/usr/bin/python3 /home/pi/Irrigate/irrigate.py
+
+[Install]
+WantedBy=multi-user.target

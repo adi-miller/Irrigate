@@ -2,9 +2,33 @@
 
 ## Installation
 
-`pip install -r requirements.txt`
+`pip3 install -r requirements.txt`
 
-Copy config_sample.yaml to config.yaml and edit to match your location and preferences. 
+Copy config_sample.yaml to config.yaml and edit to match your location and preferences.
+
+### Start as a Service (optional)
+
+To enable irrigate to start as a SYSTEMD service edit `irrigate.service` according to your configuration (set execution path for `python3` as well as the location of `irrigate.py`) and then copy `irrigate.service` to `/lib/systemd/system` and set it's permissions to 644:
+
+```bash
+cp irrigate.service /lib/systemd/system
+sudo chmod 644 /lib/systemd/system/irrigate.service
+```
+
+Next install the service and set it to run at system start up by executing the following commands:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable irrigate.service
+```
+
+To manually start / stop and to see the current status of the service, use the following commands respectively:
+
+```
+sudo systemctl start irrigate.service
+sudo systemctl stop irrigate.service
+sudo systemctl status irrigate.service
+```
 
 ## Run
 
@@ -45,4 +69,4 @@ It is used to prevent the valve from opening when a new job starts or to close t
 
 This is used to manually open a valve. Valve suspend is still respected, so a valve will not open if it is suspended. It does override any sensors because sensors are defined on a schedule.
 
-The duration is specified as part of the `open` command.
+The duration is specified in the payload of the `open` command.
