@@ -240,7 +240,8 @@ class Irrigate:
             aValve.secondsDaily = 0
 
         if self.everyXMinutes("idleInterval", self.cfg.telemIdleInterval, False) and self.cfg.telemetry:
-          uptime = (datetime.now() - self.startTime).seconds // 60
+          delta = (datetime.now() - self.startTime)
+          uptime = ((delta.days * 86400) + delta.seconds) // 60
           self.mqtt.publish("/svc/uptime", uptime)
           for valve in self.valves.values():
             self.telemetryValve(valve)
