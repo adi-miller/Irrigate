@@ -4,6 +4,8 @@ import pytz
 import model
 import queue
 import config
+import signal
+import getopt
 import logging
 import calendar
 import threading
@@ -14,10 +16,31 @@ from datetime import timedelta
 from threading import Thread
 
 def main(argv):
+  options, remainder = getopt.getopt(sys.argv[1:], "", ["config=", "test"])
+
   configFilename = "config.yaml"
-  if len(argv) > 1:
-    configFilename = argv[1]
+  test = False
+
+  for opt, arg in options:
+    if opt == "--config":
+      configFilename = arg
+    elif opt == "--test":
+      test = True
+
   irrigate = Irrigate(configFilename)
+
+  if test:
+    irrigate.logger.info("Entering test mode. CTRL-C to exit...")
+    while True:
+      for v in irrigate.valves.values():
+        v.handler.open()
+        time.sleep(0.5)
+      time.sleep(2)
+      for v in irrigate.valves.values():
+        v.handler.close()
+        time.sleep(0.5)
+      time.sleep(2)
+
   irrigate.start(False)
   try:
     while not irrigate.terminated:
@@ -28,6 +51,9 @@ def main(argv):
 
 class Irrigate:
   def __init__(self, configFilename):
+    signal.signal(signal.SIGINT, self.exit_gracefully)
+    signal.signal(signal.SIGTERM, self.exit_gracefully)
+
     self.startTime = datetime.now()
     self.logger = self.getLogger()
     self.logger.info("Reading configuration file '%s'..." % configFilename)
@@ -37,6 +63,9 @@ class Irrigate:
     self.createThreads()
     self._intervalDict = {}
     self.sensors = {}
+
+  def exit_gracefully(self, *args):
+    self.terminated = True
 
   def start(self, test = True):
     if self.cfg.mqttEnabled:
@@ -207,7 +236,7 @@ class Irrigate:
             valve.handler.close()
             self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.secondsDaily))
           valve.handled = False
-        self.q.task_done();
+        self.q.task_done()
       except queue.Empty:
         pass
     self.logger.warning("Valve handler thread '%s' exited." % threading.currentThread().getName())
