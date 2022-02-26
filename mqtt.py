@@ -17,9 +17,11 @@ class Mqtt:
       self.mqttClient = self.getMyMqtt()
 
       topicPrefix = str(self.cfg.mqttClientName) + "/"
-      self.registerTopics(topicPrefix, "open")
+      self.registerTopics(topicPrefix, "queue")
       self.registerTopics(topicPrefix, "suspend")
       self.registerTopics(topicPrefix, "enabled")
+      self.registerTopics(topicPrefix, "forceopen")
+      self.registerTopics(topicPrefix, "forceclose")
       self.mqttClient.on_message = self.on_message
 
       worker = threading.Thread(target=self.mqttLooper, args=())
@@ -79,7 +81,7 @@ class Mqtt:
 
       valves = self.valves
 
-      if topicParts[1] == "open":
+      if topicParts[1] == "queue":
         self.irrigate.queueJob(model.Job(valve = valves[valveName], sched = None, duration = float(payload)))
         return
 
@@ -102,6 +104,14 @@ class Mqtt:
           valves[valveName].enabled = True
           self.logger.info("Enabled valve '%s' via MQTT command" % valveName)
           return
+
+      if topicParts[1] == "forceopen":
+        valves[valveName].handler.open()
+        return
+
+      if topicParts[1] == "forceclose":
+        valves[valveName].handler.close()
+        return
 
       self.logger.warning("Invalid payload received for topic %s = '%s'" % (topic, payload))
     except Exception as ex:
