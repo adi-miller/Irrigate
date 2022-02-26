@@ -85,8 +85,14 @@ class Config:
         aType = schedYaml['type']
         aStart = schedYaml['start']
         aDuration = schedYaml['duration']
-        aDays = schedYaml['days']
-        aSeasons = schedYaml['seasons']
+        if 'days' in schedYaml:
+          aDays = schedYaml['days']
+        else:
+          aDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        if 'seasons' in schedYaml:
+          aSeasons = schedYaml['seasons']
+        else:
+          aSeasons = ['Spring', 'Summer', 'Fall', 'Winter']
         schedObj = model.Schedule(sched, aType, aStart, aDuration, aDays, aSeasons)
         if 'sensor' in schedYaml:
           if schedYaml['sensor'] in self.sensors:
