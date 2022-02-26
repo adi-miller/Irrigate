@@ -3,7 +3,7 @@ from test_base import init
 from test_base import assertValves
 from test_base import setStartTimeToNow
 
-def test_sh_mqttOpen():
+def test_sh_mqttQueue():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   cfg.valves['valve1'].schedules.clear()
   cfg.valves['valve2'].schedules.clear()
@@ -12,13 +12,13 @@ def test_sh_mqttOpen():
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/open/valve1/command", 0.2)
+  irrigate.mqtt.processMessages("xxx/queue/valve1/command", 0.2)
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (False, False), (False, False)])
   assert len(q.queue) == 0
   return irrigate, logger, valves, q, cfg
 
-def test_sh_mqttOpenDisabled():
+def test_sh_mqttQueueDisabled():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   cfg.valves['valve1'].schedules.clear()
   cfg.valves['valve2'].schedules.clear()
@@ -28,7 +28,7 @@ def test_sh_mqttOpenDisabled():
   time.sleep(4)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/open/valve1/command", 1)
+  irrigate.mqtt.processMessages("xxx/queue/valve1/command", 1)
   time.sleep(4)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
@@ -44,34 +44,34 @@ def test_sh_mqttDisable():
   assert len(q.queue) == 0
   irrigate.mqtt.processMessages("xxx/enabled/valve1/command", 0)
   time.sleep(3)
-  irrigate.mqtt.processMessages("xxx/open/valve1/command", 1)
+  irrigate.mqtt.processMessages("xxx/queue/valve1/command", 1)
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   irrigate.mqtt.processMessages("xxx/enabled/valve1/command", 1)
   time.sleep(3)
-  irrigate.mqtt.processMessages("xxx/open/valve1/command", 1)
+  irrigate.mqtt.processMessages("xxx/queue/valve1/command", 1)
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (False, False), (False, False)])
   assert len(q.queue) == 0
 
-def test_sh_mqttDisableAfterOpen():
+def test_sh_mqttDisableAfterQueue():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   cfg.valves['valve1'].enabled = False
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
 
-def test_sh_mqttOpen2():
-  irrigate, logger, valves, q, cfg = test_sh_mqttOpen()
-  irrigate.mqtt.processMessages("xxx/open/valve2/command", 0.2)
+def test_sh_mqttQueue2():
+  irrigate, logger, valves, q, cfg = test_sh_mqttQueue()
+  irrigate.mqtt.processMessages("xxx/queue/valve2/command", 0.2)
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
   assert len(q.queue) == 0
   return irrigate, logger, valves, q, cfg
 
-def test_mqttOpen3():
-  irrigate, logger, valves, q, cfg = test_sh_mqttOpen2()
-  irrigate.mqtt.processMessages("xxx/open/valve3/command", 1)
+def test_mqttQueue3():
+  irrigate, logger, valves, q, cfg = test_sh_mqttQueue2()
+  irrigate.mqtt.processMessages("xxx/queue/valve3/command", 1)
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
   assert len(q.queue) == 1
@@ -80,8 +80,8 @@ def test_mqttOpen3():
   assert len(q.queue) == 0
 
 def test_sh_mqttDisableWhileInQueue():
-  irrigate, logger, valves, q, cfg = test_sh_mqttOpen2()
-  irrigate.mqtt.processMessages("xxx/open/valve3/command", 1)
+  irrigate, logger, valves, q, cfg = test_sh_mqttQueue2()
+  irrigate.mqtt.processMessages("xxx/queue/valve3/command", 1)
   time.sleep(3)
   assertValves(valves, ['valve1', 'valve2', 'valve3'], [(True, True), (True, True), (False, False)])
   assert len(q.queue) == 1
@@ -91,7 +91,7 @@ def test_sh_mqttDisableWhileInQueue():
   assert len(q.queue) == 0
 
 def test_sh_mqttSuspend():
-  irrigate, logger, valves, q, cfg = test_sh_mqttOpen()
+  irrigate, logger, valves, q, cfg = test_sh_mqttQueue()
   time.sleep(2)
   irrigate.mqtt.processMessages("xxx/suspend/valve1/command", 1)
   time.sleep(1)
@@ -134,7 +134,7 @@ def test_sh_mqttErrors():
   time.sleep(2)
   irrigate.mqtt.processMessages("xxx/suspend/valve1/command", "asd")
   time.sleep(1)
-  irrigate.mqtt.processMessages("xxx/open/valve1/command", "asd")
+  irrigate.mqtt.processMessages("xxx/queue/valve1/command", "asd")
   time.sleep(1)
   irrigate.mqtt.processMessages("xxx/enable/valve1/command", "")
   time.sleep(1)

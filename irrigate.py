@@ -34,11 +34,11 @@ def main(argv):
     while True:
       for v in irrigate.valves.values():
         v.handler.open()
-        time.sleep(0.5)
-      time.sleep(2)
+        time.sleep(0.2)
+      time.sleep(3)
       for v in irrigate.valves.values():
         v.handler.close()
-        time.sleep(0.5)
+        time.sleep(0.2)
       time.sleep(2)
 
   irrigate.start(False)
@@ -51,7 +51,7 @@ def main(argv):
 
 class Irrigate:
   def __init__(self, configFilename):
-    signal.signal(signal.SIGINT, self.exit_gracefully)
+
     signal.signal(signal.SIGTERM, self.exit_gracefully)
 
     self.startTime = datetime.now()
