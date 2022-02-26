@@ -26,6 +26,8 @@ class ThreeWireValve(BaseValve):
     BaseValve.__init__(self, logger, config)
     self.gpioOn = config['gpioOn']
     self.gpioOff = config['gpioOff']
+    self.pulseDuration = min(config.get('pulseDuration', 0.02), 0.2) # Must not exceed 200ms to avoid toasting the transistors and the valves
+
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
     GPIO.setup(self.gpioOn, GPIO.OUT)
@@ -33,15 +35,19 @@ class ThreeWireValve(BaseValve):
 
   def open(self):
     BaseValve.open(self)
-    GPIO.output(self.gpioOn, GPIO.HIGH)
-    time.sleep(0.5)
-    GPIO.output(self.gpioOn, GPIO.LOW)
+    try:
+      GPIO.output(self.gpioOn, GPIO.HIGH)
+      time.sleep(self.pulseDuration)
+    finally:
+      GPIO.output(self.gpioOn, GPIO.LOW)
 
   def close(self):
     BaseValve.close(self)
-    GPIO.output(self.gpioOff, GPIO.HIGH)
-    time.sleep(0.5)
-    GPIO.output(self.gpioOff, GPIO.LOW)
+    try:
+      GPIO.output(self.gpioOff, GPIO.HIGH)
+      time.sleep(self.pulseDuration)
+    finally:
+      GPIO.output(self.gpioOff, GPIO.LOW)
 
 def valveFactory(type, logger, config):
   if type == 'test':
