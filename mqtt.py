@@ -115,4 +115,4 @@ class Mqtt:
 
       self.logger.warning("Invalid payload received for topic %s = '%s'" % (topic, payload))
     except Exception as ex:
-      self.logger.error("Error parsing payload received for topic %s = '%s'. Error message: '%s'" % (topic, payload, ex.message))
+      self.logger.error("Error parsing payload received for topic %s = '%s'. Error message: '%s'" % (topic, payload, format(ex)))
