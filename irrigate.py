@@ -238,7 +238,7 @@ class Irrigate:
             self.logger.debug("Irrigation valve '%s' Last Open = %ss. Remaining = %ss. Daily Total = %ss." \
               % (valve.name, valve.secondsLast, valve.secondsRemain, valve.secondsDaily))
             time.sleep(1)
-            if valve.waterflow != None and self.everyXMinutes(valve.name, 1, False):
+            if valve.waterflow != None and valve.waterflow.handler.started and self.everyXMinutes(valve.name, 1, False):
               _lastLiter_1m = valve.waterflow.handler.lastLiter_1m()
               valve.litersDaily = valve.litersDaily + _lastLiter_1m
               valve.litersLast = valve.litersLast + _lastLiter_1m
@@ -350,14 +350,14 @@ class Irrigate:
 
     if valve.open:
       self.mqtt.publish(valve.name+"/secondsLast", valve.secondsLast)
-      if valve.waterflow != None:
+      if valve.waterflow != None and valve.waterflow.handler.started:
         self.mqtt.publish(valve.name+"/litersLast", valve.litersLast)
         if valve.secondsLast > 60 and valve.litersLast == 0:
           statusStr = "malfunction"
 
     self.mqtt.publish(valve.name+"/status", statusStr)
     self.mqtt.publish(valve.name+"/dailytotal", valve.secondsDaily)
-    if valve.waterflow != None:
+    if valve.waterflow != None and valve.waterflow.handler.started:
       self.mqtt.publish(valve.name+"/dailyliters", valve.litersDaily)
     self.mqtt.publish(valve.name+"/remaining", valve.secondsRemain)
 

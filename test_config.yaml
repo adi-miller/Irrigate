@@ -59,6 +59,13 @@ schedules:
     duration: 1
     sensor: xdarkskySensor
 
+waterflows:
+  waterflowMain:
+    enabled: true
+    type: test
+    global: True
+    leakdetection: True
+
 valves:
   valve1: 
     type: test

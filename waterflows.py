@@ -36,12 +36,12 @@ class TestWaterflow(BaseWaterflow):
     if self.started:
       return
 
-    self.started = True
     self.logger.info("TestWaterflow '%s' started." % self.name)
     self.worker = threading.Thread(target=self.tickerThread, args=())
     self.worker.setDaemon(True)
     self.worker.setName("WtrFlwTh-%s" % self.name)
     self.worker.start()
+    self.started = True
 
   def tickerThread(self):
     while True:
