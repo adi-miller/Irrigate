@@ -301,7 +301,7 @@ class Irrigate:
             if valve.handled:
               self.telemetryValve(valve)
 
-          if self.globalWaterflow != None and self.globalWaterflow.handle.started and self.globalWaterflow.leakDetection:
+          if self.globalWaterflow != None and self.globalWaterflow.handler.started and self.globalWaterflow.leakDetection:
             if self.allValvesClosed():
               if self.globalWaterflow.handler.lastLiter_1m() > 0:
                 self.mqtt.publish("/svc/status", "leak")
