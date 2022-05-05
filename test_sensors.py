@@ -64,9 +64,9 @@ def test_sh_mqttQueueOnSensorDisabled():
   assertValves(valves, ['valve5'], [(True, True)])
 
 def test_sh_scheduleSensorShouldDisable():
-  # This test validates that when the sensor is ShouldDisable, then the valve doesn't even open initially 
+  # This test validates that when the sensor is ShouldDisable, then the valve doesn't even open initially
   # (this needs to be verified by viewing the logs), but does get queued so that if the sensor turns to
-  # ShouldDisable == False, then the valve opens. 
+  # ShouldDisable == False, then the valve opens.
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   cfg.valves['valve1'].schedules.clear()
   cfg.valves['valve2'].schedules.clear()

@@ -39,7 +39,6 @@ class Config:
       logger.error("Failed to initialize configuration with error message '%s'. Aborting." % format(ex))
       raise
 
-
   def getLatLon(self):
     return self.latitude, self.longitude
 
@@ -65,7 +64,7 @@ class Config:
       except KeyError as ex:
         self.logger.error("Mandatory configuration %s missing in valve '%s'." % (format(ex), valve))
         raise
-    
+
     return valves
 
   def initSensors(self):
@@ -127,7 +126,7 @@ class Config:
         waterflowObj._global = waterflowYaml['global']
         waterflowObj.leakDetection = waterflowYaml['leakdetection']
         if waterflowObj._global:
-          if _global == None:
+          if _global is None:
             _global = waterflowObj
           else:
             raise Exception("There can be only one Global Waterflow.")

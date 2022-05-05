@@ -151,4 +151,3 @@ def test_sh_mqttErrors():
   irrigate.mqtt.processMessages("/", 4)
   time.sleep(30)
   assert valves['valve1'].secondsDaily == 30
-

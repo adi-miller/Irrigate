@@ -2,7 +2,7 @@ import time
 import threading
 from datetime import datetime
 from datetime import timedelta
-from paho.mqtt import client 
+from paho.mqtt import client
 
 class BaseWaterflow():
   def __init__(self, logger, name, config):
@@ -90,7 +90,7 @@ class MqttWaterflow(BaseWaterflow):
     try:
       self.setLastLiter_1m(float(msg.payload))
     except Exception as ex:
-      self.logger.error("MqttWaterflow '%s' failed to parse payload. Topic '%s' = '%s'" % (self.name, msg.topic, msg.payload))
+      self.logger.error("MqttWaterflow '%s' failed to parse payload. Topic '%s' = '%s'. Error message: '%s'" % (self.name, msg.topic, msg.payload, ex.message))
 
 class GpioWaterflow(BaseWaterflow):
   def __init__(self, logger, name, config):

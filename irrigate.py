@@ -80,7 +80,7 @@ class Irrigate:
 
     self.logger.debug("Starting sensors...")
     for sch in self.cfg.schedules.values():
-      if sch.sensor != None:
+      if sch.sensor is not None:
         sensorHandler = sch.sensor.handler
         try:
           if not sensorHandler.started:
@@ -92,9 +92,9 @@ class Irrigate:
 
     self.logger.debug("Starting waterflows...")
     for waterflow in self.waterflows.values():
-      if waterflow.handler != None and waterflow.enabled:
+      if waterflow.handler is not None and waterflow.enabled:
         try:
-          self.logger.info("Starting waterflow '%s'." % format(waterflow.handler) )
+          self.logger.info("Starting waterflow '%s'." % format(waterflow.handler))
           waterflow.handler.start()
         except Exception as ex:
           self.logger.error("Error starting waterflow '%s': '%s'." % (waterflow.name, format(ex)))
@@ -123,13 +123,13 @@ class Irrigate:
 
   def evalSched(self, sched, timezone, now):
     todayStr = calendar.day_abbr[datetime.today().weekday()]
-    if not todayStr in sched.days:
+    if todayStr not in sched.days:
       return False
-      
+
     lat, lon = self.cfg.getLatLon()
-    if sched.seasons != None and not self.getSeason(lat) in sched.seasons:
+    if sched.seasons is not None and not self.getSeason(lat) in sched.seasons:
       return False
-  
+
     hours, minutes = sched.start.split(":")
     startTime = datetime.now()
 
@@ -200,8 +200,8 @@ class Irrigate:
           startTime = datetime.now()
           while startTime + duration > datetime.now():
             # The following two if statements needs to be together and first to prevent
-            # the valve from opening if the sensor is disable. 
-            if irrigateJob.sensor != None and irrigateJob.sensor.handler.started: 
+            # the valve from opening if the sensor is disable.
+            if irrigateJob.sensor is not None and irrigateJob.sensor.handler.started:
               try:
                 holdSensorDisabled = irrigateJob.sensor.handler.shouldDisable()
                 if holdSensorDisabled != sensorDisabled:
@@ -227,7 +227,7 @@ class Irrigate:
             if valve.open:
               valve.secondsLast = (datetime.now() - openSince).seconds
               valve.secondsDaily = initialOpen + valve.secondsLast
-            if valve.enabled == False:
+            if not valve.enabled:
               self.logger.info("Valve '%s' disabled. Terminating irrigation cycle." % (valve.name))
               break
             if self.terminated:
@@ -238,7 +238,7 @@ class Irrigate:
             self.logger.debug("Irrigation valve '%s' Last Open = %ss. Remaining = %ss. Daily Total = %ss." \
               % (valve.name, valve.secondsLast, valve.secondsRemain, valve.secondsDaily))
             time.sleep(1)
-            if valve.waterflow != None and valve.waterflow.handler.started and self.everyXMinutes(valve.name, 1, False):
+            if valve.waterflow is not None and valve.waterflow.handler.started and self.everyXMinutes(valve.name, 1, False):
               _lastLiter_1m = valve.waterflow.handler.lastLiter_1m()
               valve.litersDaily = valve.litersDaily + _lastLiter_1m
               valve.litersLast = valve.litersLast + _lastLiter_1m
@@ -260,7 +260,7 @@ class Irrigate:
 
   def queueJob(self, job):
     self.q.put(job)
-    if job.sched != None:
+    if job.sched is not None:
       self.logger.info("Valve '%s' job queued per sched '%s'. Duration %s minutes." % (job.valve.name, job.sched.name, job.duration))
     else:
       self.logger.info("Valve '%s' adhoc job queued. Duration %s minutes." % (job.valve.name, job.duration))
@@ -295,13 +295,13 @@ class Irrigate:
 
           for sensor in self.sensors.keys():
             self.telemetrySensor(sensor, self.sensors[sensor])
-  
+
         if self.everyXMinutes("activeinterval", self.cfg.telemActiveInterval, False) and self.cfg.telemetry:
           for valve in self.valves.values():
             if valve.handled:
               self.telemetryValve(valve)
 
-          if self.globalWaterflow != None and self.globalWaterflow.handler.started and self.globalWaterflow.leakDetection:
+          if self.globalWaterflow is not None and self.globalWaterflow.handler.started and self.globalWaterflow.leakDetection:
             if self.allValvesClosed():
               if self.globalWaterflow.handler.lastLiter_1m() > 0:
                 self.mqtt.publish("/svc/status", "leak")
@@ -312,11 +312,11 @@ class Irrigate:
           # Must not evaluate more or less than once every minute otherwise running jobs will get queued again
           for aValve in self.valves.values():
             if aValve.enabled:
-              if aValve.schedules != None:
+              if aValve.schedules is not None:
                 for valveSched in aValve.schedules.values():
                   if self.evalSched(valveSched, self.cfg.timezone, now):
                     jobDuration = valveSched.duration
-                    if valveSched.sensor != None and valveSched.sensor.handler != None and valveSched.sensor.handler.started:
+                    if valveSched.sensor is not None and valveSched.sensor.handler is not None and valveSched.sensor.handler.started:
                       try:
                         factor = valveSched.sensor.handler.getFactor()
                         if factor != 1:
@@ -326,7 +326,7 @@ class Irrigate:
                         self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
                     job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
                     self.queueJob(job)
-  
+
         time.sleep(1)
     except Exception as ex:
       self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
@@ -350,14 +350,14 @@ class Irrigate:
 
     if valve.open:
       self.mqtt.publish(valve.name+"/secondsLast", valve.secondsLast)
-      if valve.waterflow != None and valve.waterflow.handler.started:
+      if valve.waterflow is not None and valve.waterflow.handler.started:
         self.mqtt.publish(valve.name+"/litersLast", valve.litersLast)
         if valve.secondsLast > 60 and valve.litersLast == 0:
           statusStr = "malfunction"
 
     self.mqtt.publish(valve.name+"/status", statusStr)
     self.mqtt.publish(valve.name+"/dailytotal", valve.secondsDaily)
-    if valve.waterflow != None and valve.waterflow.handler.started:
+    if valve.waterflow is not None and valve.waterflow.handler.started:
       self.mqtt.publish(valve.name+"/dailyliters", valve.litersDaily)
     self.mqtt.publish(valve.name+"/remaining", valve.secondsRemain)
 
@@ -371,13 +371,12 @@ class Irrigate:
         statusStr = "Factored"
       self.mqtt.publish(prefix + "factor", sensor.getFactor())
       telem = sensor.getTelemetry()
-      if telem != None:
+      if telem is not None:
         for t in telem.keys():
           self.mqtt.publish(prefix + t, telem[t])
     except Exception as ex:
       statusStr = "Error"
     self.mqtt.publish(prefix + "status", statusStr)
-
 
   def getLogger(self):
     formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',
@@ -394,5 +393,3 @@ class Irrigate:
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
-
-    

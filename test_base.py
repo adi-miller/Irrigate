@@ -1,7 +1,7 @@
 import pytz
 import time
 import datetime
-from irrigate import Irrigate 
+from irrigate import Irrigate
 from suntime import Sun
 
 def assertValves(valves, valveNames, status, assumption = None):
@@ -13,11 +13,11 @@ def assertValves(valves, valveNames, status, assumption = None):
 
 def setStartTimeToNow(cfg, sched, deltaInMinutes = None, duration = None):
   nowTime = datetime.datetime.now()
-  if deltaInMinutes != None:
+  if deltaInMinutes is not None:
     nowTime = nowTime + datetime.timedelta(minutes=deltaInMinutes)
-  if duration != None:
+  if duration is not None:
     cfg.schedules[sched].duration = duration
-  cfg.schedules[sched].start  = str(nowTime.hour) + ":" + str(nowTime.minute)
+  cfg.schedules[sched].start = str(nowTime.hour) + ":" + str(nowTime.minute)
 
 def init(configFilename):
   irrigate = Irrigate(configFilename)
@@ -80,14 +80,14 @@ def test_sunset():
   sunsetTime = sun.get_local_sunset_time().replace(tzinfo=pytz.timezone(timezone))
   if (nowTime < sunsetTime):
     offset = sunsetTime - nowTime
-    cfg.schedules['sched3'].start = "+" 
+    cfg.schedules['sched3'].start = "+"
   else:
     offset = nowTime - sunsetTime
-    cfg.schedules['sched3'].start = "-" 
+    cfg.schedules['sched3'].start = "-"
 
   hours = offset.seconds // 60 // 60
   minutes = (offset.seconds - (hours * 60 * 60)) // 60
-  cfg.schedules['sched3'].start = cfg.schedules['sched3'].start = "+"  + str(hours) + ":" + str(minutes)
+  cfg.schedules['sched3'].start = cfg.schedules['sched3'].start = "+" + str(hours) + ":" + str(minutes)
   cfg.schedules['sched3'].duration = 1
   cfg.valves['valve4'].enabled = True
   cfg.valves['valve1'].schedules.clear()
@@ -108,15 +108,15 @@ def test_sunrise():
   sunriseTime = sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
   if (nowTime < sunriseTime):
     offset = sunriseTime - nowTime
-    cfg.schedules['sched3'].start = "+" 
+    cfg.schedules['sched3'].start = "+"
   else:
     offset = nowTime - sunriseTime
-    cfg.schedules['sched3'].start = "-" 
+    cfg.schedules['sched3'].start = "-"
 
   hours = offset.seconds // 60 // 60
   minutes = (offset.seconds - (hours * 60 * 60)) // 60
   cfg.schedules['sched3'].type = 'sunrise'
-  cfg.schedules['sched3'].start = cfg.schedules['sched3'].start = "+"  + str(hours) + ":" + str(minutes)
+  cfg.schedules['sched3'].start = cfg.schedules['sched3'].start = "+" + str(hours) + ":" + str(minutes)
   cfg.schedules['sched3'].duration = 1
   cfg.valves['valve4'].enabled = True
   cfg.valves['valve1'].schedules.clear()
@@ -130,7 +130,7 @@ def test_sunrise():
 
 def test_sh_valveDisableInitially():
   # When a valve is disabled, it doesn't get scheduled so enabling it after the schedule was
-  # already evaluated, does not queue it. 
+  # already evaluated, does not queue it.
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
   setStartTimeToNow(cfg, 'sched1')
   setStartTimeToNow(cfg, 'sched2', deltaInMinutes=1)

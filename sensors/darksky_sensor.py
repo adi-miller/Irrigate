@@ -82,7 +82,7 @@ class DarkskySensor:
     if self.precip > 0.9 and self.precipProbability >= self.probabilityThreshold:
       return True
 
-    # Disable if it rained recently 
+    # Disable if it rained recently
     if self.recentPrecip > 1:
       return True
 
@@ -108,3 +108,4 @@ class DarkskySensor:
       res["recentPrecip"] = self.recentPrecip
       self._sendTelemetry = False
     return res
+    

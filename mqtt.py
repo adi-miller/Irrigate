@@ -1,7 +1,7 @@
 import time
 import model
-import threading 
-from paho.mqtt import client 
+import threading
+from paho.mqtt import client
 
 class Mqtt:
   def __init__(self, irrigate):
@@ -82,7 +82,7 @@ class Mqtt:
       valves = self.valves
 
       if topicParts[1] == "queue":
-        self.irrigate.queueJob(model.Job(valve = valves[valveName], sched = None, duration = float(payload)))
+        self.irrigate.queueJob(model.Job(valve=valves[valveName], sched=None, duration=float(payload)))
         return
 
       if topicParts[1] == "suspend":
@@ -115,4 +115,4 @@ class Mqtt:
 
       self.logger.warning("Invalid payload received for topic %s = '%s'" % (topic, payload))
     except Exception as ex:
-      self.logger.error("Error parsing payload received for topic %s = '%s'" % (topic, payload))
+      self.logger.error("Error parsing payload received for topic %s = '%s'. Error message: '%s'" % (topic, payload, ex.message))
