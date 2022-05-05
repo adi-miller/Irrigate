@@ -92,6 +92,14 @@ class MqttWaterflow(BaseWaterflow):
     except Exception as ex:
       self.logger.error("MqttWaterflow '%s' failed to parse payload. Topic '%s' = '%s'" % (self.name, msg.topic, msg.payload))
 
+class GpioWaterflow(BaseWaterflow):
+  def __init__(self, logger, name, config):
+    BaseWaterflow.__init__(self, logger, name, config)
+
+  # Can be called multiple times. Make sure to initialize only once
+  def start(self):
+    raise Exception("Not implemented.")
+
 def waterflowFactory(type, name, logger, config):
   if type == 'mqtt':
     return MqttWaterflow(logger, name, config)
