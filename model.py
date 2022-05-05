@@ -6,9 +6,11 @@ class Valve:
     self.open = False
     self.suspended = False
     self.secondsDaily = 0
+    self.litersDaily = 0
     self.secondsRemain = 0
     self.schedules = {}
     self.handler = handler
+    self.waterflow = None
 
 class Schedule:
   def __init__(self, name, type, start, duration, days, seasons):
@@ -32,3 +34,9 @@ class Job:
     self.duration = duration
     self.sched = sched
     self.sensor = sensor
+
+class Waterflow:
+  def __init__(self, name, type, handler):
+    self.name = name
+    self.type = type
+    self.handler = handler

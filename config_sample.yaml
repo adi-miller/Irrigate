@@ -66,22 +66,35 @@ schedules:
     duration: 20
     sensor: darkskySensor
 
+waterflows:
+  waterflowMain:
+    enabled: true
+    type: mqtt
+    global: True
+    leakdetection: True
+    hostname: localhost
+    clientname: irrigationPi-waterflow1
+    topic: waterflow1/liter_1m
+
 valves:
   valve1: 
     enabled: true
     type: 3wire
+    waterflow: waterflowMain
     schedules: 
       - backLawnSummerSched
       - backLawnWinterSched
   valve2: 
     enabled: true
     type: 3wire
+    waterflow: waterflowMain
     schedules: 
       - frontLawnSummerSched
       - frontLawnWinterSched
   valve3:
     enabled: true
     type: 3wire
+    waterflow: waterflowMain
     schedules: 
       - shadeSched
   valve4:

@@ -1,8 +1,8 @@
 import yaml
 import model
-import sensors.sensors
-from sensors.sensors import sensorFactory
 from valves import valveFactory
+from sensors.sensors import sensorFactory
+from waterflows import waterflowFactory
 
 class Config:
   def __init__(self, logger, filename):
@@ -33,6 +33,7 @@ class Config:
     try:
       self.sensors = self.initSensors()
       self.schedules = self.initSchedules()
+      self.waterflows, self.globalWaterflow = self.initWaterFlows()
       self.valves = self.initValves(self.schedules)
     except Exception as ex:
       logger.error("Failed to initialize configuration with error message '%s'. Aborting." % format(ex))
@@ -53,6 +54,13 @@ class Config:
         valveObj.enabled = valveYaml['enabled']
         for sched in valveYaml['schedules']:
           valveObj.schedules[sched] = schedules[sched]
+
+        if 'waterflow' in valveYaml:
+          waterflowId = valveYaml['waterflow']
+          if waterflowId in self.waterflows:
+            valveObj.waterflow = self.waterflows[waterflowId]
+          else:
+            raise Exception("Waterflow '%s' that is specified in valve '%s' is not found. Is it defined in the waterflows section?" % (waterflowId, valve))
         valves[valve] = valveObj
       except KeyError as ex:
         self.logger.error("Mandatory configuration %s missing in valve '%s'." % (format(ex), valve))
@@ -105,3 +113,27 @@ class Config:
         raise
 
     return scheds
+
+  def initWaterFlows(self):
+    waterflows = {}
+    _global = None
+
+    for waterflow in self.cfg['waterflows']:
+      try:
+        waterflowYaml = self.cfg['waterflows'][waterflow]
+        waterflowType = waterflowYaml['type']
+        waterflowObj = model.Waterflow(waterflow, waterflowType, waterflowFactory(waterflowType, waterflow, self.logger, waterflowYaml))
+        waterflowObj.enabled = waterflowYaml['enabled']
+        waterflowObj._global = waterflowYaml['global']
+        waterflowObj.leakDetection = waterflowYaml['leakdetection']
+        if waterflowObj._global:
+          if _global == None:
+            _global = waterflowObj
+          else:
+            raise Exception("There can be only one Global Waterflow.")
+        waterflows[waterflow] = waterflowObj
+      except KeyError as ex:
+        self.logger.error("Mandatory configuration %s missing in waterflow '%s'." % (format(ex), waterflow))
+        raise
+
+    return waterflows, _global
