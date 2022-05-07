@@ -7,7 +7,7 @@ def test_sh_waterflowException():
   setStartTimeToNow(cfg, 'sched2', deltaInMinutes=10)
   irrigate.globalWaterflow.handler.exception = True
   irrigate.start()
-  assert not irrigate.globalWaterflow.handler.started 
+  assert not irrigate.globalWaterflow.handler.started
 
 def test_sh_waterflowLeakDetection():
   irrigate, logger, cfg, valves, q = init("test_config.yaml")
@@ -15,4 +15,4 @@ def test_sh_waterflowLeakDetection():
   setStartTimeToNow(cfg, 'sched2', deltaInMinutes=10)
   irrigate.globalWaterflow.handler.exception = True
   irrigate.start()
-  assert not irrigate.globalWaterflow.handler.started 
+  assert not irrigate.globalWaterflow.handler.started

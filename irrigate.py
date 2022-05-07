@@ -341,7 +341,7 @@ class Irrigate:
 
     # The waterflow sensor may still report some flow after the valve is closed (depends on the sensor
     # report interval, typically 10 seconds). So AllValvesClosed will report True only 60 seconds
-    # after all valves have been closed. 
+    # after all valves have been closed.
     if self._lastAllClosed is None:
       self._lastAllClosed = datetime.now()
 
@@ -397,7 +397,7 @@ class Irrigate:
     logger.setLevel(logging.DEBUG)
     logger.addHandler(handler)
     logger.addHandler(screen_handler)
-    return logger  
+    return logger
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))

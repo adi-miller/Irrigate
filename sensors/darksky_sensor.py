@@ -108,4 +108,3 @@ class DarkskySensor:
       res["recentPrecip"] = self.recentPrecip
       self._sendTelemetry = False
     return res
-    
