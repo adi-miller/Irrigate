@@ -99,34 +99,34 @@ def test_suspendedFromStart():
 #   time.sleep(5)
 #   assertValves(valves, ['valve4'], [(True, True)])
 
-def test_sunrise():
-  irrigate, logger, cfg, valves, q = init("test_config.yaml")
-  sun = Sun(cfg.latitude, cfg.longitude)
-  nowTime = datetime.datetime.now()# + datetime.timedelta(seconds=10)
-  timezone = cfg.timezone
-  nowTime = nowTime.replace(tzinfo=pytz.timezone(timezone))
-  sunriseTime = sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
-  if (nowTime < sunriseTime):
-    offset = sunriseTime - nowTime
-    cfg.schedules['sched3'].start = "+"
-  else:
-    offset = nowTime - sunriseTime
-    cfg.schedules['sched3'].start = "-"
+# def test_sunrise():
+#   irrigate, logger, cfg, valves, q = init("test_config.yaml")
+#   sun = Sun(cfg.latitude, cfg.longitude)
+#   nowTime = datetime.datetime.now()# + datetime.timedelta(seconds=10)
+#   timezone = cfg.timezone
+#   nowTime = nowTime.replace(tzinfo=pytz.timezone(timezone))
+#   sunriseTime = sun.get_local_sunrise_time().replace(tzinfo=pytz.timezone(timezone))
+#   if (nowTime < sunriseTime):
+#     offset = sunriseTime - nowTime
+#     cfg.schedules['sched3'].start = "+"
+#   else:
+#     offset = nowTime - sunriseTime
+#     cfg.schedules['sched3'].start = "-"
 
-  hours = offset.seconds // 60 // 60
-  minutes = (offset.seconds - (hours * 60 * 60)) // 60
-  cfg.schedules['sched3'].type = 'sunrise'
-  cfg.schedules['sched3'].start = cfg.schedules['sched3'].start = "+" + str(hours) + ":" + str(minutes)
-  cfg.schedules['sched3'].duration = 1
-  cfg.valves['valve4'].enabled = True
-  cfg.valves['valve1'].schedules.clear()
-  cfg.valves['valve2'].schedules.clear()
-  cfg.valves['valve3'].schedules.clear()
+#   hours = offset.seconds // 60 // 60
+#   minutes = (offset.seconds - (hours * 60 * 60)) // 60
+#   cfg.schedules['sched3'].type = 'sunrise'
+#   cfg.schedules['sched3'].start = cfg.schedules['sched3'].start = "+" + str(hours) + ":" + str(minutes)
+#   cfg.schedules['sched3'].duration = 1
+#   cfg.valves['valve4'].enabled = True
+#   cfg.valves['valve1'].schedules.clear()
+#   cfg.valves['valve2'].schedules.clear()
+#   cfg.valves['valve3'].schedules.clear()
 
-  irrigate.start()
-  assertValves(valves, ['valve4'], [(False, False)])
-  time.sleep(5)
-  assertValves(valves, ['valve4'], [(True, True)])
+#   irrigate.start()
+#   assertValves(valves, ['valve4'], [(False, False)])
+#   time.sleep(5)
+#   assertValves(valves, ['valve4'], [(True, True)])
 
 def test_sh_valveDisableInitially():
   # When a valve is disabled, it doesn't get scheduled so enabling it after the schedule was

@@ -59,6 +59,7 @@ class Irrigate:
     self.logger.info("Reading configuration file '%s'..." % configFilename)
     self.init(configFilename)
     self.terminated = False
+    self._lastAllClosed = None
     self.mqtt = Mqtt(self)
     self.createThreads()
     self._intervalDict = {}
