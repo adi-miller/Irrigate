@@ -296,17 +296,18 @@ class Irrigate:
           for sensor in self.sensors.keys():
             self.telemetrySensor(sensor, self.sensors[sensor])
 
-        if self.everyXMinutes("activeinterval", self.cfg.telemActiveInterval, False) and self.cfg.telemetry:
+        if self.everyXMinutes("activeInterval", self.cfg.telemActiveInterval, False) and self.cfg.telemetry:
           for valve in self.valves.values():
             if valve.handled:
               self.telemetryValve(valve)
 
+        if self.everyXMinutes("statusInterval", 1, False):
+          statusStr = "OK"
           if self.globalWaterflow is not None and self.globalWaterflow.handler.started and self.globalWaterflow.leakDetection:
             if self.allValvesClosed():
               if self.globalWaterflow.handler.lastLiter_1m() > 0:
-                self.mqtt.publish("/svc/status", "leak")
-              else:
-                self.mqtt.publish("/svc/status", "OK")
+                statusStr = "leak"
+          self.mqtt.publish("/svc/status", statusStr)
 
         if self.everyXMinutes("scheduler", 1, True):
           # Must not evaluate more or less than once every minute otherwise running jobs will get queued again
@@ -335,9 +336,16 @@ class Irrigate:
   def allValvesClosed(self):
     for valve in self.valves.values():
       if valve.open:
+        self._lastAllClosed = None
         return False
 
-    return True
+    # The waterflow sensor may still report some flow after the valve is closed (depends on the sensor
+    # report interval, typically 10 seconds). So AllValvesClosed will report True only 60 seconds
+    # after all valves have been closed. 
+    if self._lastAllClosed is None:
+      self._lastAllClosed = datetime.now()
+
+    return datetime.now() >= self._lastAllClosed + timedelta(0, 60)
 
   def telemetryValve(self, valve):
     statusStr = "enabled"

@@ -85,33 +85,36 @@ class Mqtt:
         self.irrigate.queueJob(model.Job(valve=valves[valveName], sched=None, duration=float(payload)))
         return
 
-      if topicParts[1] == "suspend":
-        if int(payload) == 0:
-          valves[valveName].suspended = False
-          self.logger.info("Un-suspended valve '%s' via MQTT command" % valveName)
-          return
-        elif int(payload) == 1:
-          valves[valveName].suspended = True
-          self.logger.info("Suspended valve '%s' via MQTT command" % valveName)
+      try:
+        if topicParts[1] == "suspend":
+          if int(payload) == 0:
+            valves[valveName].suspended = False
+            self.logger.info("Un-suspended valve '%s' via MQTT command" % valveName)
+            return
+          elif int(payload) == 1:
+            valves[valveName].suspended = True
+            self.logger.info("Suspended valve '%s' via MQTT command" % valveName)
+            return
+
+        if topicParts[1] == "enabled":
+          if int(payload) == 0:
+            valves[valveName].enabled = False
+            self.logger.info("Disabled valve '%s' via MQTT command" % valveName)
+            return
+          elif int(payload) == 1:
+            valves[valveName].enabled = True
+            self.logger.info("Enabled valve '%s' via MQTT command" % valveName)
+            return
+
+        if topicParts[1] == "forceopen":
+          valves[valveName].handler.open()
           return
 
-      if topicParts[1] == "enabled":
-        if int(payload) == 0:
-          valves[valveName].enabled = False
-          self.logger.info("Disabled valve '%s' via MQTT command" % valveName)
+        if topicParts[1] == "forceclose":
+          valves[valveName].handler.close()
           return
-        elif int(payload) == 1:
-          valves[valveName].enabled = True
-          self.logger.info("Enabled valve '%s' via MQTT command" % valveName)
-          return
-
-      if topicParts[1] == "forceopen":
-        valves[valveName].handler.open()
-        return
-
-      if topicParts[1] == "forceclose":
-        valves[valveName].handler.close()
-        return
+      finally:
+        self.irrigate.telemetryValve(valves[valveName])
 
       self.logger.warning("Invalid payload received for topic %s = '%s'" % (topic, payload))
     except Exception as ex:
