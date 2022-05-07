@@ -64,6 +64,8 @@ class Irrigate:
     self.createThreads()
     self._intervalDict = {}
     self.sensors = {}
+    self._status = None
+    self._tempStatus = {}
 
   def exit_gracefully(self, *args):
     self.terminated = True
@@ -89,6 +91,7 @@ class Irrigate:
             sensorHandler.start()
             self.sensors[sch.sensor.type] = sensorHandler
         except Exception as ex:
+          self.setStatus("InitErrSensor")
           self.logger.error("Error starting sensor '%s': '%s'." % (sch.sensor.type, format(ex)))
 
     self.logger.debug("Starting waterflows...")
@@ -98,10 +101,14 @@ class Irrigate:
           self.logger.info("Starting waterflow '%s'." % format(waterflow.handler))
           waterflow.handler.start()
         except Exception as ex:
+          self.setStatus("InitErrWaterflow")
           self.logger.error("Error starting waterflow '%s': '%s'." % (waterflow.name, format(ex)))
 
     self.logger.info("Starting timer thread '%s'." % self.timer.getName())
     self.timer.start()
+
+    if self._status is None:
+      self.setStatus("OK")
 
   def init(self, cfgFilename):
     self.cfg = config.Config(self.logger, cfgFilename)
@@ -208,7 +215,9 @@ class Irrigate:
                 if holdSensorDisabled != sensorDisabled:
                   sensorDisabled = holdSensorDisabled
                   self.logger.info("Suspend set to '%s' for valve '%s' from sensor" % (sensorDisabled, valve.name))
+                self.clearTempStatus("SensorErr")
               except Exception as ex:
+                self.setTempStatus("SensorErr")
                 self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.type, format(ex)))
             if not valve.open and not valve.suspended and not sensorDisabled:
               valve.open = True
@@ -293,6 +302,7 @@ class Irrigate:
           self.mqtt.publish("/svc/uptime", uptime)
           for valve in self.valves.values():
             self.telemetryValve(valve)
+          self.publishStatus()
 
           for sensor in self.sensors.keys():
             self.telemetrySensor(sensor, self.sensors[sensor])
@@ -302,13 +312,13 @@ class Irrigate:
             if valve.handled:
               self.telemetryValve(valve)
 
-        if self.everyXMinutes("statusInterval", 1, False):
-          statusStr = "OK"
+        if self.everyXMinutes("checkLeakInterval", 1, False):
           if self.globalWaterflow is not None and self.globalWaterflow.handler.started and self.globalWaterflow.leakDetection:
             if self.allValvesClosed():
               if self.globalWaterflow.handler.lastLiter_1m() > 0:
-                statusStr = "leak"
-          self.mqtt.publish("/svc/status", statusStr)
+                self.setTempStatus("Leaking")
+              else:
+                self.clearTempStatus("Leaking")
 
         if self.everyXMinutes("scheduler", 1, True):
           # Must not evaluate more or less than once every minute otherwise running jobs will get queued again
@@ -324,15 +334,37 @@ class Irrigate:
                         if factor != 1:
                           jobDuration = jobDuration * factor
                           self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
+                        self.clearTempStatus("SensorErr")
                       except Exception as ex:
+                        self.setTempStatus("SensorErr")
                         self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
                     job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
                     self.queueJob(job)
 
         time.sleep(1)
     except Exception as ex:
+      self.setStatus("Terminating")
       self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
+
+  def setTempStatus(self, tempStatus):
+    self._tempStatus[tempStatus] = True
+    self.publishStatus()
+
+  def clearTempStatus(self, tempStatus):
+    if tempStatus in self._tempStatus:
+      del self._tempStatus[tempStatus]
+    self.publishStatus()
+
+  def setStatus(self, status):
+    self._status = status
+    self.publishStatus()
+
+  def publishStatus(self):
+    if len(self._tempStatus.keys()) > 0:
+      self.mqtt.publish("/svc/status", ",".join(self._tempStatus.keys()))
+    else:
+      self.mqtt.publish("/svc/status", self._status)
 
   def allValvesClosed(self):
     for valve in self.valves.values():
