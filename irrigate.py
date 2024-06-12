@@ -63,7 +63,6 @@ class Irrigate:
     self.mqtt = Mqtt(self)
     self.createThreads()
     self._intervalDict = {}
-    self.sensors = {}
     self._status = None
     self._tempStatus = {}
 
@@ -82,27 +81,26 @@ class Irrigate:
       worker.start()
 
     self.logger.debug("Starting sensors...")
-    for sch in self.cfg.schedules.values():
-      if sch.sensor is not None:
-        sensorHandler = sch.sensor.handler
+    for _sensor in self.sensors.values():
+      if _sensor.enabled and not _sensor.started:
         try:
-          if not sensorHandler.started:
-            self.logger.info("Starting sensor '%s'." % format(sensorHandler))
-            sensorHandler.start()
-            self.sensors[sch.sensor.type] = sensorHandler
+          self.logger.info(f"Starting sensor '{_sensor.config.type}'.")
+          _sensor.start()
         except Exception as ex:
           self.setStatus("InitErrSensor")
-          self.logger.error("Error starting sensor '%s': '%s'." % (sch.sensor.type, format(ex)))
+          self.logger.error(f"Error starting sensor '{_sensor.name}': '{format(ex)}'.")
 
-    self.logger.debug("Starting waterflows...")
-    for waterflow in self.waterflows.values():
-      if waterflow.handler is not None and waterflow.enabled:
-        try:
-          self.logger.info("Starting waterflow '%s'." % format(waterflow.handler))
-          waterflow.handler.start()
-        except Exception as ex:
-          self.setStatus("InitErrWaterflow")
-          self.logger.error("Error starting waterflow '%s': '%s'." % (waterflow.name, format(ex)))
+    if self.waterflow is not None and self.waterflow.enabled:
+      self.waterflow.start()
+    # self.logger.debug("Starting waterflows...")
+    # for waterflow in self.waterflows.values():
+    #   if waterflow.handler is not None and waterflow.enabled:
+    #     try:
+    #       self.logger.info("Starting waterflow '%s'." % format(waterflow.handler))
+    #       waterflow.handler.start()
+    #     except Exception as ex:
+    #       self.setStatus("InitErrWaterflow")
+    #       self.logger.error("Error starting waterflow '%s': '%s'." % (waterflow.name, format(ex)))
 
     self.logger.info("Starting timer thread '%s'." % self.timer.getName())
     self.timer.start()
@@ -113,8 +111,9 @@ class Irrigate:
   def init(self, cfgFilename):
     self.cfg = config.Config(self.logger, cfgFilename)
     self.valves = self.cfg.valves
-    self.globalWaterflow = self.cfg.globalWaterflow
-    self.waterflows = self.cfg.waterflows
+    self.sensors = self.cfg.sensors
+    self.waterflow = self.cfg.waterflow
+    # self.waterflows = self.cfg.waterflows
     self.q = queue.Queue()
 
   def createThreads(self):
@@ -131,31 +130,25 @@ class Irrigate:
 
   def evalSched(self, sched, timezone, now):
     todayStr = calendar.day_abbr[datetime.today().weekday()]
-    if todayStr not in sched.days:
+    if len(sched.days) > 0 and todayStr not in sched.days:
       return False
 
     lat, lon = self.cfg.getLatLon()
-    if sched.seasons is not None and not self.getSeason(lat) in sched.seasons:
+    if len(sched.seasons) > 0 and self.getSeason(lat) not in sched.seasons:
       return False
 
-    hours, minutes = sched.start.split(":")
     startTime = datetime.now()
 
-    if sched.type == 'absolute':
+    if sched.time_based_on == 'fixed':
+      hours, minutes = sched.fixed_start_time.split(":")
       startTime = startTime.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
     else:
       sun = Sun(lat, lon)
-      if sched.type == 'sunrise':
-        startTime = sun.get_local_sunrise_time().replace(second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
-      elif sched.type == 'sunset':
-        startTime = sun.get_local_sunset_time().replace(second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
-
-    if hours[0] == '+':
-      hours = hours[1:]
-      startTime = startTime + timedelta(hours=int(hours), minutes=int(minutes))
-    if hours[0] == '-':
-      hours = hours[1:]
-      startTime = startTime - timedelta(hours=int(hours), minutes=int(minutes))
+      if sched.time_based_on == 'sunrise':
+        startTime = sun.get_sunrise_time(time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
+      elif sched.time_based_on == 'sunset':
+        startTime = sun.get_sunset_time(time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
+      startTime = startTime + timedelta(minutes=int(sched.offset_minutes))
 
     if startTime == now:
       return True
@@ -209,32 +202,32 @@ class Irrigate:
           while startTime + duration > datetime.now():
             # The following two if statements needs to be together and first to prevent
             # the valve from opening if the sensor is disable.
-            if irrigateJob.sensor is not None and irrigateJob.sensor.handler.started:
+            if irrigateJob.sensor is not None and irrigateJob.sensor.started:
               try:
-                holdSensorDisabled = irrigateJob.sensor.handler.shouldDisable()
+                holdSensorDisabled = irrigateJob.sensor.shouldDisable()
                 if holdSensorDisabled != sensorDisabled:
                   sensorDisabled = holdSensorDisabled
                   self.logger.info("Suspend set to '%s' for valve '%s' from sensor" % (sensorDisabled, valve.name))
                 self.clearTempStatus("SensorErr")
               except Exception as ex:
                 self.setTempStatus("SensorErr")
-                self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.type, format(ex)))
-            if not valve.open and not valve.suspended and not sensorDisabled:
-              valve.open = True
+                self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.name, format(ex)))
+            if not valve.is_open and not valve.suspended and not sensorDisabled:
+              valve.is_open = True
               openSince = datetime.now()
-              valve.handler.open()
+              valve.open()
               self.logger.info("Irrigation valve '%s' opened." % (valve.name))
 
-            if valve.open and (valve.suspended or sensorDisabled):
-              valve.open = False
+            if valve.is_open and (valve.suspended or sensorDisabled):
+              valve.is_open = False
               valve.secondsLast = (datetime.now() - openSince).seconds
               openSince = None
               valve.secondsDaily = initialOpen + valve.secondsLast
               initialOpen = valve.secondsDaily
               valve.secondsLast = 0
-              valve.handler.close()
+              valve.close()
               self.logger.info("Irrigation valve '%s' closed." % (valve.name))
-            if valve.open:
+            if valve.is_open:
               valve.secondsLast = (datetime.now() - openSince).seconds
               valve.secondsDaily = initialOpen + valve.secondsLast
             if not valve.enabled:
@@ -254,12 +247,12 @@ class Irrigate:
               valve.litersLast = valve.litersLast + _lastLiter_1m
 
           self.logger.info("Irrigation cycle ended for valve '%s'." % (valve.name))
-          if valve.open and not valve.suspended:
+          if valve.is_open and not valve.suspended:
             valve.secondsLast = (datetime.now() - openSince).seconds
             valve.secondsDaily = initialOpen + valve.secondsLast
-          if valve.open:
-            valve.open = False
-            valve.handler.close()
+          if valve.is_open:
+            valve.is_open = False
+            valve.close()
             self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.secondsDaily))
           valve.handled = False
           self.telemetryValve(valve)
@@ -271,9 +264,9 @@ class Irrigate:
   def queueJob(self, job):
     self.q.put(job)
     if job.sched is not None:
-      self.logger.info("Valve '%s' job queued per sched '%s'. Duration %s minutes." % (job.valve.name, job.sched.name, job.duration))
+      self.logger.info(f"Valve '{job.valve.name}' job queued. Duration {job.duration} minutes.")
     else:
-      self.logger.info("Valve '%s' adhoc job queued. Duration %s minutes." % (job.valve.name, job.duration))
+      self.logger.info(f"Valve '{job.valve.name}' adhoc job queued. Duration {job.duration} minutes.")
 
   def everyXMinutes(self, key, interval, bootstrap):
     if not key in self._intervalDict.keys():
@@ -296,7 +289,7 @@ class Irrigate:
             aValve.secondsDaily = 0
             aValve.litersDaily = 0
 
-        if self.everyXMinutes("idleInterval", self.cfg.telemIdleInterval, False) and self.cfg.telemetry:
+        if self.cfg.telemetry and self.everyXMinutes("idleInterval", self.cfg.telemIdleInterval, False):
           delta = (datetime.now() - self.startTime)
           uptime = ((delta.days * 86400) + delta.seconds) // 60
           self.mqtt.publish("/svc/uptime", uptime)
@@ -307,15 +300,15 @@ class Irrigate:
           for sensor in self.sensors.keys():
             self.telemetrySensor(sensor, self.sensors[sensor])
 
-        if self.everyXMinutes("activeInterval", self.cfg.telemActiveInterval, False) and self.cfg.telemetry:
+        if self.cfg.telemetry and self.everyXMinutes("activeInterval", self.cfg.telemActiveInterval, False):
           for valve in self.valves.values():
             if valve.handled:
               self.telemetryValve(valve)
 
         if self.everyXMinutes("checkLeakInterval", 1, False):
-          if self.globalWaterflow is not None and self.globalWaterflow.handler.started and self.globalWaterflow.leakDetection:
+          if self.waterflow is not None and self.waterflow.started and self.waterflow.leakdetection:
             if self.allValvesClosed():
-              if self.globalWaterflow.handler.lastLiter_1m() > 0:
+              if self.waterflow.lastLiter_1m() > 0:
                 self.setTempStatus("Leaking")
               else:
                 self.clearTempStatus("Leaking")
@@ -325,20 +318,20 @@ class Irrigate:
           for aValve in self.valves.values():
             if aValve.enabled:
               if aValve.schedules is not None:
-                for valveSched in aValve.schedules.values():
+                for valveSched in aValve.schedules:
                   if self.evalSched(valveSched, self.cfg.timezone, now):
                     jobDuration = valveSched.duration
-                    if valveSched.sensor is not None and valveSched.sensor.handler is not None and valveSched.sensor.handler.started:
+                    if valveSched.enable_uv_adjustments:
                       try:
-                        factor = valveSched.sensor.handler.getFactor()
+                        factor = self.uv_adjustments(aValve.sensor.getUv())
                         if factor != 1:
-                          jobDuration = jobDuration * factor
-                          self.logger.info("Job duration changed from '%s' to '%s' based on input from sensor." % (valveSched.duration, jobDuration))
+                          jobDuration *= factor
+                          self.logger.info(f"Job duration changed from '{valveSched.duration}' to '{jobDuration}' based on input from sensor.")
                         self.clearTempStatus("SensorErr")
                       except Exception as ex:
                         self.setTempStatus("SensorErr")
                         self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
-                    job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched, sensor = valveSched.sensor)
+                    job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched)
                     self.queueJob(job)
 
         time.sleep(1)
@@ -346,7 +339,14 @@ class Irrigate:
       self.setStatus("Terminating")
       self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
-
+  
+  def uv_adjustments(self, uv):
+    for _ in self.cfg.cfg.uv_adjustments:
+      if uv <= _.max_uv_index:
+        return _.multiplier
+      
+    return self.cfg.cfg.uv_adjustments[-1].multiplier
+  
   def setTempStatus(self, tempStatus):
     self._tempStatus[tempStatus] = True
     self.publishStatus()
@@ -368,7 +368,7 @@ class Irrigate:
 
   def allValvesClosed(self):
     for valve in self.valves.values():
-      if valve.open:
+      if valve.is_open:
         self._lastAllClosed = None
         return False
 
@@ -386,10 +386,10 @@ class Irrigate:
       statusStr = "disabled"
     elif valve.suspended:
       statusStr = "suspended"
-    elif valve.open:
+    elif valve.is_open:
       statusStr = "open"
 
-    if valve.open:
+    if valve.is_open:
       self.mqtt.publish(valve.name+"/secondsLast", valve.secondsLast)
       if valve.waterflow is not None and valve.waterflow.handler.started:
         self.mqtt.publish(valve.name+"/litersLast", valve.litersLast)
@@ -425,7 +425,7 @@ class Irrigate:
     handler = logging.FileHandler('log.txt', mode='w')
     handler.setFormatter(formatter)
     screen_handler = logging.StreamHandler(stream=sys.stdout)
-    # screen_handler.setFormatter(formatter)
+    screen_handler.setFormatter(formatter)
     logger = logging.getLogger("MyLogger")
     logger.setLevel(logging.DEBUG)
     logger.addHandler(handler)

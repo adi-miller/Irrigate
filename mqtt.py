@@ -42,7 +42,7 @@ class Mqtt:
     self.logger.info("Topic '%s' registered." % topicStr)
 
   def getMyMqtt(self):
-    mqttClient = client.Client(self.cfg.mqttClientName)
+    mqttClient = client.Client(client.CallbackAPIVersion.VERSION1, self.cfg.mqttClientName)
     mqttClient.user_data_set(self)
     mqttClient.on_connect = self.on_connect
     mqttClient.connect(self.cfg.mqttHostName)
@@ -77,7 +77,9 @@ class Mqtt:
     self.logger.debug("MQTT message received for topic '%s' payload '%s'." % (topic, payload))
     try:
       topicParts = topic.split("/")
-      valveName = topicParts[2]
+      valveName = topicParts[2].replace('_', ' ')
+      if valveName not in self.valves:
+        raise Exception(f"Valve name '{valveName}' does not exist in configuration. Ignoring message.")
 
       valves = self.valves
 
@@ -107,11 +109,11 @@ class Mqtt:
             return
 
         if topicParts[1] == "forceopen":
-          valves[valveName].handler.open()
+          valves[valveName].open()
           return
 
         if topicParts[1] == "forceclose":
-          valves[valveName].handler.close()
+          valves[valveName].close()
           return
       finally:
         self.irrigate.telemetryValve(valves[valveName])

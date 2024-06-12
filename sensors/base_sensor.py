@@ -1,45 +1,15 @@
-from sensors.darksky_sensor import DarkskySensor
-
-class RainSensor():
-  def __init__(self, logger):
+class BaseSensor():
+  def __init__(self, logger, config):
+    self.name = config.name
     self.logger = logger
-
-  def start(self):
-    self.logger.info("Sensor Rain started.")
-
-  def shouldDisable(self):
-    return False
-
-  def getFactor(self):
-    return 1
-
-  def getTelemetry(self):
-    pass
-
-class UvSensor():
-  def __init__(self, logger):
-    self.logger = logger
-
-  def start(self):
-    self.logger.info("Sensor UV started.")
-
-  def shouldDisable(self):
-    return False
-
-  def getFactor(self):
-    return 1
-
-  def getTelemetry(self):
-    pass
-
-class TestSensor():
-  def __init__(self, logger):
-    self.logger = logger
+    self.config = config
+    self.enabled = config.enabled
     self.disable = False
-    self.factor = 1
+    self.uv = 10.2
     self.exception = False
     self.started = False
 
+class TestSensor(BaseSensor):
   # Can be called multiple times. Make sure to initialize only once
   def start(self):
     if self.exception:
@@ -60,11 +30,11 @@ class TestSensor():
 
     return self.disable
 
-  def getFactor(self):
+  def getUv(self):
     if self.exception:
-      raise Exception("Test exception in sensor.getFactor()")
+      raise Exception("Test exception in sensor.getUv()")
 
-    return self.factor
+    return self.uv
 
   def getTelemetry(self):
     testTelemetry = []
@@ -74,14 +44,9 @@ class TestSensor():
     return testTelemetry
 
 def sensorFactory(type, logger, config):
-  if type == 'rain':
-    return RainSensor(logger)
-
-  if type == 'uv':
-    return UvSensor(logger)
-
   if type == 'test':
-    return TestSensor(logger)
+    return TestSensor(logger, config)
 
-  if type == 'darksky':
-    return DarkskySensor(logger, config)
+  if type == 'openweathermap':
+    from sensors.openweathermap_sensor import OpenWeatherMapSensor
+    return OpenWeatherMapSensor(logger, config)

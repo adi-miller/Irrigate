@@ -1,0 +1,165 @@
+{
+  "timezone": "Israel",
+  "max_concurrent_valves": 2,
+  "location": {
+    "latitude": 32.156835,
+    "longitude": 34.805154
+  },
+  "mqtt": {
+    "enabled": false,
+    "hostname": "localhost",
+    "client_name": "irrigationPi"
+  },
+  "telemetry": {
+    "enabled": false,
+    "idle_interval": 10,
+    "active_interval": 1
+  },
+  "uv_adjustments": [
+    {"max_uv_index": 2, "multiplier": 0.2},
+    {"max_uv_index": 5, "multiplier": 1.0},
+    {"max_uv_index": 7, "multiplier": 1.5},
+    {"max_uv_index": 10, "multiplier": 2.0}
+  ],
+  "sensors": [
+    {
+      "type": "test",
+      "name": "TestSensor1",
+      "enabled": true
+    }
+  ],
+  "waterflow": {
+    "type": "test",
+    "enabled": true,
+    "leakdetection": true,
+    "hostname": "localhost",
+    "clientname": "waterflow1",
+    "topic": "waterflow1/mcu/liter_1m"
+  },
+  "valves": [
+    {
+      "name": "Test1",
+      "type": "test",
+      "enabled": true,
+      "gpio_on_pin": 27,
+      "gpio_off_pin": 17,
+      "watering_mode": "duration",
+      "schedules": [
+        {
+          "seasons": ["Spring", "Summer", "Fall", "Winter"],
+          "days": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+          "time_based_on": "fixed",
+          "fixed_start_time": "9:10",
+          "duration": 1,
+          "enable_uv_adjustments": false
+        }
+      ]
+    },
+    {
+      "name": "Test2",
+      "type": "test",
+      "enabled": true,
+      "gpio_on_pin": 27,
+      "gpio_off_pin": 17,
+      "watering_mode": "duration",
+      "schedules": [
+        {
+          "seasons": ["Spring", "Summer", "Fall", "Winter"],
+          "days": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+          "time_based_on": "fixed",
+          "fixed_start_time": "9:10",
+          "duration": 1,
+          "enable_uv_adjustments": false
+        }
+      ]
+    },
+    {
+      "name": "Test3",
+      "type": "test",
+      "enabled": true,
+      "gpio_on_pin": 27,
+      "gpio_off_pin": 17,
+      "watering_mode": "duration",
+      "schedules": [
+        {
+          "seasons": ["Spring", "Summer", "Fall", "Winter"],
+          "days": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+          "time_based_on": "fixed",
+          "fixed_start_time": "9:11",
+          "duration": 1,
+          "enable_uv_adjustments": false
+        }
+      ]
+    },
+    {
+      "name": "Test4",
+      "type": "test",
+      "enabled": true,
+      "gpio_on_pin": 27,
+      "gpio_off_pin": 17,
+      "watering_mode": "duration",
+      "schedules": [
+        {
+          "seasons": ["Spring", "Summer", "Fall", "Winter"],
+          "days": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+          "time_based_on": "sunset",
+          "offset_minutes": -30,
+          "duration": 15,
+          "enable_uv_adjustments": false
+        }
+      ]
+    },
+    {
+      "name": "Test5",
+      "type": "test",
+      "enabled": true,
+      "gpio_on_pin": 27,
+      "gpio_off_pin": 17,
+      "watering_mode": "duration",
+      "sensor": "TestSensor1", 
+      "schedules": [
+        {
+          "seasons": ["Spring", "Summer", "Fall", "Winter"],
+          "days": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+          "time_based_on": "fixed",
+          "fixed_start_time": "9:11",
+          "duration": 1,
+          "enable_uv_adjustments": false
+        }
+      ]
+    },
+    {
+      "name": "Test6",
+      "type": "test",
+      "enabled": true,
+      "gpio_on_pin": 12,
+      "gpio_off_pin": 13,
+      "watering_mode": "duration",
+      "sensor": "TestSensor1", 
+      "schedules": [
+        {
+          "time_based_on": "fixed",
+          "fixed_start_time": "9:11",
+          "duration": 1,
+          "enable_uv_adjustments": true
+        }
+      ]
+    },
+    {
+      "name": "Test7",
+      "type": "3wire",
+      "enabled": true,
+      "gpio_on_pin": 12,
+      "gpio_off_pin": 13,
+      "watering_mode": "duration",
+      "schedules": [
+        {
+          "time_based_on": "fixed",
+          "fixed_start_time": "9:11",
+          "duration": 1,
+          "enable_uv_adjustments": true
+        }
+      ]
+    }
+  ]
+}
