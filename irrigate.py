@@ -8,17 +8,19 @@ import signal
 import getopt
 import logging
 import calendar
+import traceback
 import threading
 from mqtt import Mqtt
 from suntime import Sun
 from datetime import datetime
 from datetime import timedelta
 from threading import Thread
+# from flask_app import run_flask_app
 
 def main(argv):
   options, remainder = getopt.getopt(sys.argv[1:], "", ["config=", "test"])
 
-  configFilename = "config.yaml"
+  configFilename = "config.json"
   test = False
 
   for opt, arg in options:
@@ -41,6 +43,10 @@ def main(argv):
         time.sleep(0.2)
       time.sleep(2)
 
+  # flask_thread = threading.Thread(target=run_flask_app, args=(irrigate,))
+  # flask_thread.daemon = True
+  # flask_thread.start()
+  
   irrigate.start(False)
   try:
     while not irrigate.terminated:
@@ -241,8 +247,8 @@ class Irrigate:
             self.logger.debug("Irrigation valve '%s' Last Open = %ss. Remaining = %ss. Daily Total = %ss." \
               % (valve.name, valve.secondsLast, valve.secondsRemain, valve.secondsDaily))
             time.sleep(1)
-            if valve.waterflow is not None and valve.waterflow.handler.started and self.everyXMinutes(valve.name, 1, False):
-              _lastLiter_1m = valve.waterflow.handler.lastLiter_1m()
+            if valve.waterflow is not None and valve.waterflow.started and self.everyXMinutes(valve.name, 1, False):
+              _lastLiter_1m = valve.waterflow.lastLiter_1m()
               valve.litersDaily = valve.litersDaily + _lastLiter_1m
               valve.litersLast = valve.litersLast + _lastLiter_1m
 
@@ -330,12 +336,13 @@ class Irrigate:
                         self.clearTempStatus("SensorErr")
                       except Exception as ex:
                         self.setTempStatus("SensorErr")
-                        self.logger.error("Error probing sensor (getFactor) '%s': %s." % (valveSched.sensor.type, format(ex)))
+                        self.logger.error("Error probing sensor (getUv) '%s': %s." % (valveSched.sensor.type, format(ex)))
                     job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched)
                     self.queueJob(job)
 
         time.sleep(1)
     except Exception as ex:
+      traceback.print_exc(ex)
       self.setStatus("Terminating")
       self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
@@ -391,14 +398,14 @@ class Irrigate:
 
     if valve.is_open:
       self.mqtt.publish(valve.name+"/secondsLast", valve.secondsLast)
-      if valve.waterflow is not None and valve.waterflow.handler.started:
+      if valve.waterflow is not None and valve.waterflow.started:
         self.mqtt.publish(valve.name+"/litersLast", valve.litersLast)
         if valve.secondsLast > 60 and valve.litersLast == 0:
           statusStr = "malfunction"
 
     self.mqtt.publish(valve.name+"/status", statusStr)
     self.mqtt.publish(valve.name+"/dailytotal", valve.secondsDaily)
-    if valve.waterflow is not None and valve.waterflow.handler.started:
+    if valve.waterflow is not None and valve.waterflow.started:
       self.mqtt.publish(valve.name+"/dailyliters", valve.litersDaily)
     self.mqtt.publish(valve.name+"/remaining", valve.secondsRemain)
 
