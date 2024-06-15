@@ -60,7 +60,7 @@ class Mqtt:
       self.logger.error("Failed to connect, return code %d\n" % (rc))
 
   def on_message(self, client, userdata, msg):
-    self.logger.debug("Received message: " + str(msg.topic))
+    self.logger.info("Received message: " + str(msg.topic))
     self.processMessages(msg.topic, msg.payload)
 
   def publish(self, topic, payload):
@@ -71,7 +71,7 @@ class Mqtt:
       self.mqttClient.publish(topicPrefix + topic, payload)
       self.logger.debug("MQTT message published for topic '%s' payload '%s'." % (topicPrefix + topic, payload))
     else:
-      self.logger.debug("MQTT disabled. Message for topic '%s' payload '%s' not published." % (topicPrefix + topic, payload))
+      self.logger.warning("MQTT disabled. Message for topic '%s' payload '%s' not published." % (topicPrefix + topic, payload))
 
   def processMessages(self, topic, payload):
     self.logger.debug("MQTT message received for topic '%s' payload '%s'." % (topic, payload))

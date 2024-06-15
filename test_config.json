@@ -157,7 +157,7 @@
           "time_based_on": "fixed",
           "fixed_start_time": "9:11",
           "duration": 1,
-          "enable_uv_adjustments": true
+          "enable_uv_adjustments": false
         }
       ]
     }
