@@ -52,11 +52,15 @@ class Config:
         valveObj = valveFactory(valveType, self.logger, _valve_cfg)
         if hasattr(_valve_cfg, 'sensor'):
           valveObj.sensor = self.sensors[_valve_cfg.sensor]
+        else:
+          for _schedule in _valve_cfg.schedules:
+            if _schedule.enable_uv_adjustments:
+              raise Exception(f"Cannot enable UV adjustments without a sensor in valve '{_valve_cfg.name}' in schedule[{_valve_cfg.schedules.index(_schedule)}]")
         if _valve_cfg.name in valves:
           raise Exception(f"Valve name already exists: {_valve_cfg.name}")
         valves[_valve_cfg.name] = valveObj
       except Exception as ex:
-        self.logger.error(f"Error initializing valve '{_valve_cfg}': {ex}. Aborting.")
+        self.logger.error(f"Error initializing valve '{_valve_cfg.name if hasattr(_valve_cfg, 'name') else 'unnamed'}': {ex}. Aborting.")
         raise
 
     return valves
