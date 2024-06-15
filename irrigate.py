@@ -96,17 +96,14 @@ class Irrigate:
           self.setStatus("InitErrSensor")
           self.logger.error(f"Error starting sensor '{_sensor.name}': '{format(ex)}'.")
 
+    self.logger.debug("Starting waterflows...")
     if self.waterflow is not None and self.waterflow.enabled:
-      self.waterflow.start()
-    # self.logger.debug("Starting waterflows...")
-    # for waterflow in self.waterflows.values():
-    #   if waterflow.handler is not None and waterflow.enabled:
-    #     try:
-    #       self.logger.info("Starting waterflow '%s'." % format(waterflow.handler))
-    #       waterflow.handler.start()
-    #     except Exception as ex:
-    #       self.setStatus("InitErrWaterflow")
-    #       self.logger.error("Error starting waterflow '%s': '%s'." % (waterflow.name, format(ex)))
+      try:
+        self.logger.info("Starting waterflow.")
+        self.waterflow.start()
+      except Exception as ex:
+        self.setStatus("InitErrWaterflow")
+        self.logger.error(f"Error starting waterflow 'format(ex)'.")
 
     self.logger.info("Starting timer thread '%s'." % self.timer.getName())
     self.timer.start()
