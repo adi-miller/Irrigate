@@ -147,10 +147,11 @@ class Irrigate:
       startTime = startTime.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
     else:
       sun = Sun(lat, lon)
-      if self.everyXMinutes("eval_debuger", 30, True):
+      if self.everyXMinutes("eval_debuger", 60, True):
+        self.logger.info(f"***")
         self.logger.info(f"*** Sunrise: {sun.get_sunrise_time(at_date=startTime, time_zone=pytz.timezone(timezone))}")
-        self.logger.info(f"*** Sunset: {sun.get_sunset_time(at_date=startTime, time_zone=pytz.timezone(timezone))}")
         self.logger.info(f"*** Sunrise: {sun.get_sunrise_time(time_zone=pytz.timezone(timezone))}")
+        self.logger.info(f"*** Sunset: {sun.get_sunset_time(at_date=startTime, time_zone=pytz.timezone(timezone))}")
         self.logger.info(f"*** Sunset: {sun.get_sunset_time(time_zone=pytz.timezone(timezone))}")
       if sched.time_based_on == 'sunrise':
         startTime = sun.get_sunrise_time(at_date=startTime, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)

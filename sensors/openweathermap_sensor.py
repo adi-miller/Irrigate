@@ -29,14 +29,14 @@ class OpenWeatherMapSensor(BaseSensor):
 
   def updaterThread(self):
     while True:
-      self.logger.info("Updating OpenWeatherMap data...")
+      self.logger.debug("Updating OpenWeatherMap data...")
       dateNow = datetime.now()
       # Get forecast
       url = f"https://api.openweathermap.org/data/3.0/onecall?exclude=current,minutely,hourly&units=metric&lat={self.lat}&lon={self.lon}&appid={self.apiKey}"
       res = self.call_api(url)
       if res is not None:
         self.uv = res['daily'][0]['uvi']
-      self.logger.debug(f"Daily UV Index ({dateNow.strftime('%c')}): {self.uv}")
+      self.logger.info(f"Daily UV Index ({dateNow.strftime('%c')}): {self.uv}")
 
       # Get recent
       self.recentPrecip = 0
@@ -46,9 +46,9 @@ class OpenWeatherMapSensor(BaseSensor):
         res = self.call_api(url)
         if res is not None:
           self.recentPrecip += res["precipitation"]["total"]
-      self.logger.debug(f"Recent Precipitation: {self.recentPrecip}")
+      self.logger.info(f"Recent Precipitation: {self.recentPrecip}")
       self._sendTelemetry = True
-      time.sleep(60*60*12)
+      time.sleep(60*60*2)
 
   def call_api(self, url):
     self.logger.debug("Performing OpenWeatherMap HTTP request...")
