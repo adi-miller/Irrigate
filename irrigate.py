@@ -149,14 +149,18 @@ class Irrigate:
       sun = Sun(lat, lon)
       if self.everyXMinutes("eval_debuger", 60, True):
         self.logger.info(f"***")
-        self.logger.info(f"*** Sunrise: {sun.get_sunrise_time(at_date=startTime, time_zone=pytz.timezone(timezone))}")
-        self.logger.info(f"*** Sunrise: {sun.get_sunrise_time(time_zone=pytz.timezone(timezone))}")
-        self.logger.info(f"*** Sunset: {sun.get_sunset_time(at_date=startTime, time_zone=pytz.timezone(timezone))}")
-        self.logger.info(f"*** Sunset: {sun.get_sunset_time(time_zone=pytz.timezone(timezone))}")
+        sunrise = sun.get_sunrise_time(at_date=startTime, time_zone=pytz.timezone(timezone))
+        sunrise = sunrise.replace(year=now.year, month=now.month, day=now.day)
+        sunset = sun.get_sunset_time(at_date=startTime, time_zone=pytz.timezone(timezone))
+        sunset = sunset.replace(year=now.year, month=now.month, day=now.day)
+        self.logger.info(f"*** Sunrise: {sunrise}")
+        self.logger.info(f"*** Sunset: {sunset}")
       if sched.time_based_on == 'sunrise':
         startTime = sun.get_sunrise_time(at_date=startTime, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
       elif sched.time_based_on == 'sunset':
         startTime = sun.get_sunset_time(at_date=startTime, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
+       
+      startTime = startTime.replace(year=now.year, month=now.month, day=now.day) # Hack, because sunset returns the wrong day for some reason
       startTime = startTime + timedelta(minutes=int(sched.offset_minutes))
 
     if startTime == now:
