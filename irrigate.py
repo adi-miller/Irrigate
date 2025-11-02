@@ -74,6 +74,11 @@ class Irrigate:
 
   def exit_gracefully(self, *args):
     self.terminated = True
+    # Gracefully shutdown MQTT connections
+    if self.mqtt:
+      self.mqtt.shutdown()
+    if self.waterflow and hasattr(self.waterflow, 'shutdown'):
+      self.waterflow.shutdown()
 
   def start(self, test = True):
     if self.cfg.mqttEnabled:
@@ -306,6 +311,7 @@ class Irrigate:
           delta = (datetime.now() - self.startTime)
           uptime = ((delta.days * 86400) + delta.seconds) // 60
           self.mqtt.publish("/svc/uptime", uptime)
+          
           for valve in self.valves.values():
             self.telemetryValve(valve)
           self.publishStatus()

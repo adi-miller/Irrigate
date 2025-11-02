@@ -45,19 +45,50 @@ class Mqtt:
     mqttClient = client.Client(client.CallbackAPIVersion.VERSION1, self.cfg.mqttClientName)
     mqttClient.user_data_set(self)
     mqttClient.on_connect = self.on_connect
+    mqttClient.on_disconnect = self.on_disconnect
     mqttClient.connect(self.cfg.mqttHostName)
     return mqttClient
 
   def mqttLooper(self):
     self.logger.info("MQTT thread started...")
-    self.mqttClient.loop_forever(retry_first_connection=False)
-    self.logger.error("MQTT thread loop exited")
+    while not self.irrigate.terminated:
+      try:
+        self.mqttClient.loop_forever(retry_first_connection=True)
+        # If we reach here, loop exited
+        if self.irrigate.terminated:
+          break
+        self.logger.warning("MQTT loop exited, reconnecting...")
+        time.sleep(5)
+      except Exception as ex:
+        self.logger.error("MQTT loop exception: %s. Reconnecting..." % format(ex))
+        if self.irrigate.terminated:
+          break
+        time.sleep(5)
+    self.logger.info("MQTT thread terminated")
 
   def on_connect(self, client, userdata, flags, rc):
     if rc == 0:
       self.logger.info("Connected to MQTT Broker.")
+      self.mqttStarted = True
     else:
       self.logger.error("Failed to connect, return code %d\n" % (rc))
+
+  def on_disconnect(self, client, userdata, rc):
+    self.mqttStarted = False
+    if rc != 0:
+      self.logger.warning("MQTT connection lost unexpectedly (code: %d). Will attempt reconnection." % rc)
+    else:
+      self.logger.info("MQTT disconnected gracefully.")
+
+  def shutdown(self):
+    """Gracefully shutdown MQTT connection"""
+    if self.mqttClient:
+      try:
+        self.logger.info("Shutting down MQTT connection...")
+        self.mqttClient.disconnect()
+        self.mqttStarted = False
+      except Exception as ex:
+        self.logger.error("Error during MQTT shutdown: %s" % format(ex))
 
   def on_message(self, client, userdata, msg):
     self.logger.info("Received message: " + str(msg.topic))
@@ -67,11 +98,25 @@ class Mqtt:
     topicPrefix = str(self.cfg.mqttClientName)
     if not topic.startswith("/"):
       topicPrefix = topicPrefix + "/raspi/"
-    if self.mqttStarted:
-      self.mqttClient.publish(topicPrefix + topic, payload)
-      self.logger.debug("MQTT message published for topic '%s' payload '%s'." % (topicPrefix + topic, payload))
-    else:
-      self.logger.warning("MQTT disabled. Message for topic '%s' payload '%s' not published." % (topicPrefix + topic, payload))
+    
+    full_topic = topicPrefix + topic
+    
+    if not self.mqttStarted:
+      self.logger.debug("MQTT not connected. Message for topic '%s' not published." % full_topic)
+      return False
+    
+    try:
+      result = self.mqttClient.publish(full_topic, payload)
+      if result.rc != 0:
+        self.logger.warning("MQTT publish failed for topic '%s' with return code %d" % (full_topic, result.rc))
+        return False
+      
+      self.logger.debug("MQTT message published for topic '%s' payload '%s'." % (full_topic, payload))
+      return True
+      
+    except Exception as ex:
+      self.logger.error("MQTT publish exception for topic '%s': %s" % (full_topic, format(ex)))
+      return False
 
   def processMessages(self, topic, payload):
     self.logger.debug("MQTT message received for topic '%s' payload '%s'." % (topic, payload))

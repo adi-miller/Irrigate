@@ -53,6 +53,7 @@ class TestWaterflow(BaseWaterflow):
 class MqttWaterflow(BaseWaterflow):
   def __init__(self, logger, config):
     BaseWaterflow.__init__(self, logger, config)
+    self.terminated = False
 
   # Can be called multiple times. Make sure to initialize only once
   def start(self):
@@ -79,13 +80,49 @@ class MqttWaterflow(BaseWaterflow):
   def getMyMqtt(self):
     mqttClient = client.Client(client.CallbackAPIVersion.VERSION1, self.config.clientname)
     mqttClient.user_data_set(self)
+    mqttClient.on_connect = self.on_connect
+    mqttClient.on_disconnect = self.on_disconnect
     mqttClient.connect(self.config.hostname)
     return mqttClient
 
+  def on_connect(self, client, userdata, flags, rc):
+    if rc == 0:
+      self.logger.info("MqttWaterflow connected to MQTT Broker.")
+    else:
+      self.logger.error("MqttWaterflow failed to connect, return code %d" % rc)
+
+  def on_disconnect(self, client, userdata, rc):
+    if rc != 0:
+      self.logger.warning("MqttWaterflow connection lost unexpectedly (code: %d). Will attempt reconnection." % rc)
+    else:
+      self.logger.info("MqttWaterflow disconnected gracefully.")
+
+  def shutdown(self):
+    """Gracefully shutdown MQTT connection"""
+    self.terminated = True
+    if self.mqttClient:
+      try:
+        self.logger.info("MqttWaterflow shutting down MQTT connection...")
+        self.mqttClient.disconnect()
+      except Exception as ex:
+        self.logger.error("MqttWaterflow error during shutdown: %s" % format(ex))
+
   def mqttLooper(self):
     self.logger.info("MqttWaterflow '%s' thread started..." % self.type)
-    self.mqttClient.loop_forever(retry_first_connection=False)
-    self.logger.error("MqttWaterflow '%s' thread loop exited" % self.type)
+    while not self.terminated:
+      try:
+        self.mqttClient.loop_forever(retry_first_connection=True)
+        # If we reach here, loop exited
+        if self.terminated:
+          break
+        self.logger.warning("MqttWaterflow loop exited, reconnecting...")
+        time.sleep(5)
+      except Exception as ex:
+        self.logger.error("MqttWaterflow loop exception: %s. Reconnecting..." % format(ex))
+        if self.terminated:
+          break
+        time.sleep(5)
+    self.logger.info("MqttWaterflow '%s' thread terminated" % self.type)
 
   def on_message(self, client, userdata, msg):
     self.logger.debug("MqttWaterflow received message: '%s' = %s" % (msg.topic, msg.payload))
