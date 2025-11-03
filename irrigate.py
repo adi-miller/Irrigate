@@ -203,8 +203,13 @@ class Irrigate:
 
     return False
 
-  def getSeason(self, lat):
-    month = datetime.today().month
+  def getSeason(self, lat, date=None):
+    """Get season for a given latitude and optional date (defaults to today)"""
+    if date is None:
+      month = datetime.today().month
+    else:
+      month = date.month if hasattr(date, 'month') else date
+    
     season = None
     if lat >= 0:
       if 3 <= month <= 5:

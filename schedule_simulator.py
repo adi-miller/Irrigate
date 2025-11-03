@@ -19,17 +19,26 @@ class ScheduleSimulator:
     self.override_uv = None
     self.override_season = None
     self.override_should_disable = None  # Override sensor.shouldDisable()
+    self.simulate_days = 1  # Number of days to simulate (1 = today, 7 = week)
     
   def parse_schedule_options(self, options_str):
     """
     Parse --schedule options string
-    Format: --schedule=date:2025-06-15,time:08:30,uv:8,season:Summer,rain:yes
+    Format: --schedule=date:2025-06-15,time:08:30,uv:8,season:Summer,rain:yes,week,days:7
     """
     if not options_str:
       return
     
     parts = options_str.split(',')
     for part in parts:
+      part = part.strip()
+      
+      # Handle standalone 'week' option
+      if part.lower() == 'week':
+        self.simulate_days = 7
+        self.logger.info("Simulating full week (7 days)")
+        continue
+      
       if ':' not in part:
         self.logger.warning(f"Invalid schedule option format: '{part}'. Expected key:value")
         continue
@@ -47,6 +56,10 @@ class ScheduleSimulator:
             year = datetime.now().year
             self.override_date = datetime.strptime(f"{year}-{value}", '%Y-%m-%d').date()
           self.logger.info(f"Override date: {self.override_date}")
+        
+        elif key == 'days':
+          self.simulate_days = int(value)
+          self.logger.info(f"Simulating {self.simulate_days} days")
           
         elif key == 'time':
           # Format: HH:MM or HH:MM:SS
@@ -104,36 +117,23 @@ class ScheduleSimulator:
     
     return now
   
+  def get_week_start_date(self):
+    """Get the Sunday of the current week (or override week)"""
+    base_date = self.get_simulation_datetime()
+    # Get the day of week (0=Monday, 6=Sunday in Python)
+    # We want Sunday as start, so adjust
+    days_since_sunday = (base_date.weekday() + 1) % 7
+    sunday = base_date - timedelta(days=days_since_sunday)
+    return sunday.replace(hour=0, minute=0, second=0, microsecond=0)
+  
   def get_simulation_season(self, lat):
     """Get season for simulation (either override or calculated)"""
     if self.override_season:
       return self.override_season
     
-    # Use the simulation date to determine season
+    # Use irrigate's getSeason method with the simulation date
     sim_dt = self.get_simulation_datetime()
-    month = sim_dt.month
-    
-    season = None
-    if lat >= 0:
-      if 3 <= month <= 5:
-        season = "Spring"
-      elif 6 <= month <= 8:
-        season = "Summer"
-      elif 9 <= month <= 11:
-        season = "Fall"
-      elif month == 12 or month <= 2:
-        season = "Winter"
-    else:
-      if 3 <= month <= 5:
-        season = "Fall"
-      elif 6 <= month <= 8:
-        season = "Winter"
-      elif 9 <= month <= 11:
-        season = "Spring"
-      elif month == 12 or month <= 2:
-        season = "Summer"
-    
-    return season
+    return self.irrigate.getSeason(lat, sim_dt)
   
   def get_simulation_uv(self, sensor):
     """Get UV index for simulation (either override or from sensor)"""
@@ -153,41 +153,54 @@ class ScheduleSimulator:
   
   def get_scheduled_jobs_for_simulation(self):
     """
-    Get all jobs that should be triggered for the simulation datetime.
-    Similar to Irrigate.getScheduledJobsForToday() but uses simulation overrides.
+    Get all jobs that should be triggered for the simulation datetime/period.
+    Supports single day or multi-day (week) simulation.
     """
-    sim_now = self.get_simulation_datetime()
+    # Determine the base date for simulation
+    if self.simulate_days == 7 and not self.override_date:
+      # For week simulation without explicit date, start from Sunday of current week
+      base_datetime = self.get_week_start_date()
+    else:
+      base_datetime = self.get_simulation_datetime()
+    
     scheduled_jobs = []
     
-    for valve_name, valve in self.irrigate.valves.items():
-      if not valve.enabled or not valve.schedules:
-        continue
-        
-      for sched in valve.schedules:
-        # Check day using simulation date
-        todayStr = calendar.day_abbr[sim_now.weekday()]
-        if len(sched.days) > 0 and todayStr not in sched.days:
+    # Loop through each day in the simulation period
+    for day_offset in range(self.simulate_days):
+      sim_date = base_datetime + timedelta(days=day_offset)
+      
+      for valve_name, valve in self.irrigate.valves.items():
+        if not valve.enabled or not valve.schedules:
           continue
-        
-        # Check season using simulation logic
-        lat, lon = self.irrigate.cfg.getLatLon()
-        season = self.get_simulation_season(lat)
-        if len(sched.seasons) > 0 and season not in sched.seasons:
-          continue
-        
-        # Calculate when this job would be queued (using simulation date)
-        schedule_time = self.calculate_schedule_time_for_simulation(sched, sim_now)
-        
-        # Calculate duration with UV adjustments (using simulation UV)
-        duration = self.calculate_job_duration_for_simulation(valve, sched)
-        
-        scheduled_jobs.append({
-          'valve_name': valve_name,
-          'valve': valve,
-          'schedule_time': schedule_time,
-          'duration_minutes': duration,
-          'schedule': sched
-        })
+          
+        for sched in valve.schedules:
+          # Check day using simulation date
+          todayStr = calendar.day_abbr[sim_date.weekday()]
+          if len(sched.days) > 0 and todayStr not in sched.days:
+            continue
+          
+          # Check season using simulation logic
+          lat, lon = self.irrigate.cfg.getLatLon()
+          season = self.irrigate.getSeason(lat, sim_date) if day_offset > 0 else self.get_simulation_season(lat)
+          if len(sched.seasons) > 0 and season not in sched.seasons:
+            continue
+          
+          # Calculate when this job would be queued (using simulation date)
+          schedule_time = self.calculate_schedule_time_for_simulation(sched, sim_date)
+          
+          # Calculate duration with UV adjustments (using simulation UV)
+          base_duration = sched.duration
+          adjusted_duration = self.calculate_job_duration_for_simulation(valve, sched)
+          
+          scheduled_jobs.append({
+            'valve_name': valve_name,
+            'valve': valve,
+            'schedule_time': schedule_time,
+            'base_duration': base_duration,
+            'duration_minutes': adjusted_duration,
+            'schedule': sched,
+            'sim_date': sim_date.date()  # Store the date for grouping in output
+          })
     
     # Sort by scheduled time (queue order)
     scheduled_jobs.sort(key=lambda x: x['schedule_time'])
@@ -238,12 +251,16 @@ class ScheduleSimulator:
   
   def simulate_queue_execution(self, scheduled_jobs):
     """Simulate queue execution to predict actual start/end times"""
-    sim_now = self.get_simulation_datetime()
-    
     # Track when each worker slot becomes available
-    # Start at midnight of simulation date
-    midnight = sim_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    worker_slots = [midnight for _ in range(self.irrigate.cfg.valvesConcurrency)]
+    # For multi-day simulation, start at the beginning of the first day
+    if scheduled_jobs:
+      first_job_date = min(job['schedule_time'] for job in scheduled_jobs)
+      start_time = first_job_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+      sim_now = self.get_simulation_datetime()
+      start_time = sim_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    worker_slots = [start_time for _ in range(self.irrigate.cfg.valvesConcurrency)]
     
     for job in scheduled_jobs:
       # Find the earliest available worker slot
@@ -264,16 +281,6 @@ class ScheduleSimulator:
       # Update the worker slot that will handle this job
       worker_idx = worker_slots.index(earliest_available)
       worker_slots[worker_idx] = actual_end
-      
-      # Update status based on simulation time
-      if sim_now >= actual_end:
-        job['status'] = 'completed'
-      elif sim_now >= actual_start:
-        job['status'] = 'running'
-      elif sim_now >= job['schedule_time']:
-        job['status'] = 'queued'
-      else:
-        job['status'] = 'scheduled'
     
     return scheduled_jobs
   
@@ -308,8 +315,18 @@ class ScheduleSimulator:
       print()
     
     if not schedule:
-      print("\nNo irrigation jobs scheduled for this day/time.")
-      print(f"Simulation date/time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
+      print("\nNo irrigation jobs scheduled for this period.")
+      if self.simulate_days > 1:
+        if self.simulate_days == 7 and not self.override_date:
+          base_date = self.get_week_start_date()
+          end_date = base_date + timedelta(days=6)
+          print(f"Period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+        else:
+          base_date = self.get_simulation_datetime()
+          end_date = base_date + timedelta(days=self.simulate_days - 1)
+          print(f"Period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+      else:
+        print(f"Simulation date/time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
       
       # Show why there are no jobs
       lat, lon = self.irrigate.cfg.getLatLon()
@@ -320,47 +337,92 @@ class ScheduleSimulator:
     else:
       print(f"\nMax concurrent valves: {self.irrigate.cfg.valvesConcurrency}")
       print(f"Timezone: {self.irrigate.cfg.timezone}")
-      print(f"Simulation time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
       
-      # Show day and season info
-      lat, lon = self.irrigate.cfg.getLatLon()
-      season = self.get_simulation_season(lat)
-      day = calendar.day_abbr[sim_now.weekday()]
-      print(f"Day: {day}, Season: {season}")
+      if self.simulate_days > 1:
+        if self.simulate_days == 7 and not self.override_date:
+          base_date = self.get_week_start_date()
+          end_date = base_date + timedelta(days=6)
+          print(f"Simulation period: {base_date.strftime('%a %b %d')} to {end_date.strftime('%a %b %d, %Y')}")
+        else:
+          base_date = self.get_simulation_datetime()
+          end_date = base_date + timedelta(days=self.simulate_days - 1)
+          print(f"Simulation period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+      else:
+        print(f"Simulation time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
       
       print("\n" + "-"*80)
       
-      for i, job in enumerate(schedule, 1):
-        print(f"\nJob #{i}: {job['valve_name']}")
+      # Group jobs by date
+      jobs_by_date = {}
+      for job in schedule:
+        date_key = job['sim_date']
+        if date_key not in jobs_by_date:
+          jobs_by_date[date_key] = []
+        jobs_by_date[date_key].append(job)
+      
+      job_counter = 1
+      for sim_date in sorted(jobs_by_date.keys()):
+        jobs = jobs_by_date[sim_date]
         
-        # Format schedule time with type (Sunrise/Sunset/Fixed)
-        sched = job['schedule']
-        if sched.time_based_on == 'sunrise':
-          schedule_str = f"Sunrise ({job['schedule_time'].strftime('%H:%M:%S')})"
-        elif sched.time_based_on == 'sunset':
-          schedule_str = f"Sunset ({job['schedule_time'].strftime('%H:%M:%S')})"
-        else:  # fixed
-          schedule_str = f"Fixed ({job['schedule_time'].strftime('%H:%M:%S')})"
+        # Date header for multi-day
+        if self.simulate_days > 1:
+          date_obj = datetime.combine(sim_date, datetime.min.time())
+          print("-"*80)
+          print(f"{calendar.day_abbr[date_obj.weekday()]}, {date_obj.strftime('%B %d, %Y')}")
+          print("-"*80)
         
-        print(f"  Scheduled:    {schedule_str}")
-        print(f"  Actual Start: {job['actual_start'].strftime('%H:%M:%S')}", end="")
-        if job['queue_delay_minutes'] > 0:
-          print(f" (delayed {job['queue_delay_minutes']:.0f} min)")
-        else:
-          print()
-        print(f"  Actual End:   {job['actual_end'].strftime('%H:%M:%S')}")
-        print(f"  Duration:     {job['duration_minutes']:.1f} minutes")
-        print(f"  Status:       {job['status']}")
-        
-        # Show schedule details
-        print(f"  Days:         {', '.join(sched.days) if sched.days else 'Every day'}")
-        print(f"  Seasons:      {', '.join(sched.seasons) if sched.seasons else 'All seasons'}")
-        print(f"  Timing:       {sched.time_based_on}", end="")
-        if sched.time_based_on == 'fixed':
-          print(f" at {sched.fixed_start_time}")
-        else:
-          offset = sched.offset_minutes
-          print(f" {'+' if offset >= 0 else ''}{offset} minutes")
-        print(f"  UV Adjust:    {'Yes' if sched.enable_uv_adjustments else 'No'}")
+        for job in jobs:
+          sched = job['schedule']
+          
+          # Build compact scheduled line
+          # Format: Sunrise+90 (07:15) or Fixed (08:00) or Sunset-30 (18:45)
+          if sched.time_based_on == 'sunrise':
+            offset = sched.offset_minutes
+            if offset == 0:
+              timing_str = f"Sunrise ({job['schedule_time'].strftime('%H:%M')})"
+            elif offset > 0:
+              timing_str = f"Sunrise +{offset} ({job['schedule_time'].strftime('%H:%M')})"
+            else:
+              timing_str = f"Sunrise {offset} ({job['schedule_time'].strftime('%H:%M')})"
+          elif sched.time_based_on == 'sunset':
+            offset = sched.offset_minutes
+            if offset == 0:
+              timing_str = f"Sunset ({job['schedule_time'].strftime('%H:%M')})"
+            elif offset > 0:
+              timing_str = f"Sunset +{offset} ({job['schedule_time'].strftime('%H:%M')})"
+            else:
+              timing_str = f"Sunset {offset} ({job['schedule_time'].strftime('%H:%M')})"
+          else:  # fixed
+            timing_str = f"Fixed ({job['schedule_time'].strftime('%H:%M')})"
+          
+          # Add days if not all days
+          days_str = " everyday"
+          if len(sched.days) > 0 and len(sched.days) < 7:
+            days_str = " every " + ", ".join(sched.days)
+          
+          # Add seasons if not all seasons
+          seasons_str = ""
+          if len(sched.seasons) > 0 and len(sched.seasons) < 4:
+            seasons_str = " in " + ", ".join(sched.seasons)
+          
+          # Add UV adjustment flag
+          uv_str = ", UV Adjusted" if sched.enable_uv_adjustments else ""
+          
+          print(f"\nJob #{job_counter}: {job['valve_name']}")
+          print(f"  Scheduled:    {timing_str}{days_str}{seasons_str}{uv_str}")
+          print(f"  Actual Start: {job['actual_start'].strftime('%H:%M:%S')}", end="")
+          if job['queue_delay_minutes'] > 0:
+            print(f" (delayed {job['queue_delay_minutes']:.0f} min)")
+          else:
+            print()
+          print(f"  Actual End:   {job['actual_end'].strftime('%H:%M:%S')}")
+          
+          # Duration: show base duration, and if UV adjusted, show the adjusted value in parentheses
+          if job['base_duration'] != job['duration_minutes']:
+            print(f"  Duration:     {job['base_duration']:.0f} minutes ({job['duration_minutes']:.0f} minutes with UV adjustment)")
+          else:
+            print(f"  Duration:     {job['duration_minutes']:.0f} minutes")
+          
+          job_counter += 1
     
     print("\n" + "="*80 + "\n")
