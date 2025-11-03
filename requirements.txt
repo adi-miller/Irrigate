@@ -4,3 +4,5 @@ pytz
 paho-mqtt
 requests
 RPi.GPIO
+fastapi
+uvicorn[standard]

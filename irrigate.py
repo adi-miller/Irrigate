@@ -16,7 +16,7 @@ from datetime import datetime
 from datetime import timedelta
 from threading import Thread
 from schedule_simulator import ScheduleSimulator
-# from flask_app import run_flask_app
+from api_server import run_api_server
 
 def main(argv):
   # Check for --simulate flag (with or without =)
@@ -65,9 +65,10 @@ def main(argv):
         time.sleep(0.2)
       time.sleep(2)
 
-  # flask_thread = threading.Thread(target=run_flask_app, args=(irrigate,))
-  # flask_thread.daemon = True
-  # flask_thread.start()
+  # Start FastAPI server in background thread
+  api_thread = threading.Thread(target=run_api_server, args=(irrigate,))
+  api_thread.daemon = True
+  api_thread.start()
   
   irrigate.start(False)
   try:
