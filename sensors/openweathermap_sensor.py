@@ -23,8 +23,8 @@ class OpenWeatherMapSensor(BaseSensor):
     self.started = True
     self.logger.info("Sensor OpenWeatherMap starting...")
     self.worker = Thread(target=self.updaterThread, args=())
-    self.worker.setDaemon(True)
-    self.worker.setName("WeatTh")
+    self.worker.daemon = True
+    self.worker.name = "WeatTh"
     self.worker.start()
 
   def updaterThread(self):

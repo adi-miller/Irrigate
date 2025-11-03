@@ -40,8 +40,8 @@ class TestWaterflow(BaseWaterflow):
 
     self.logger.info("TestWaterflow '%s' started." % self.type)
     self.worker = threading.Thread(target=self.tickerThread, args=())
-    self.worker.setDaemon(True)
-    self.worker.setName("WtrFlwTh-%s" % self.type)
+    self.worker.daemon = True
+    self.worker.name = f"WtrFlwTh-{self.type}"
     self.worker.start()
     self.started = True
 
@@ -66,8 +66,8 @@ class MqttWaterflow(BaseWaterflow):
       self.mqttClient.subscribe(self.config.topic)
       self.mqttClient.on_message = self.on_message
       worker = threading.Thread(target=self.mqttLooper, args=())
-      worker.setDaemon(True)
-      worker.setName("WtrFlwTh-%s" % self.type)
+      worker.daemon = True
+      worker.name = f"WtrFlwTh-{self.type}"
       worker.start()
       while not self.mqttClient.is_connected():
         self.logger.info("Waiting for MqttWaterflow connection...")

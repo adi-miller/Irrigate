@@ -109,8 +109,8 @@ class Irrigate:
 
     self.logger.debug("Starting worker threads...")
     for worker in self.workers:
-      self.logger.info("Starting worker thread '%s'." % worker.getName())
-      worker.setDaemon(test)
+      self.logger.info("Starting worker thread '%s'." % worker.name)
+      worker.daemon = test
       worker.start()
 
     self.logger.debug("Starting sensors...")
@@ -132,7 +132,7 @@ class Irrigate:
         self.setStatus("InitErrWaterflow")
         self.logger.error(f"Error starting waterflow 'format(ex)'.")
 
-    self.logger.info("Starting timer thread '%s'." % self.timer.getName())
+    self.logger.info("Starting timer thread '%s'." % self.timer.name)
     self.timer.start()
 
     if self._status is None:
@@ -150,13 +150,13 @@ class Irrigate:
     self.workers = []
     for i in range(self.cfg.valvesConcurrency):
       worker = Thread(target=self.valveThread, args=())
-      worker.setDaemon(False)
-      worker.setName("ValveTh%s" % i)
+      worker.daemon = False
+      worker.name = f"ValveTh{i}"
       self.workers.append(worker)
 
     self.timer = Thread(target=self.timerThread, args=())
-    self.timer.setDaemon(True)
-    self.timer.setName("TimerTh")
+    self.timer.daemon = True
+    self.timer.name = "TimerTh"
 
   def calculateScheduleTime(self, sched, now):
     """Calculate when a schedule should trigger
@@ -367,7 +367,7 @@ class Irrigate:
         self.q.task_done()
       except queue.Empty:
         pass
-    self.logger.warning("Valve handler thread '%s' exited." % threading.currentThread().getName())
+    self.logger.warning("Valve handler thread '%s' exited." % threading.currentThread().name)
 
   def queueJob(self, job):
     self.q.put(job)

@@ -25,7 +25,7 @@ class Mqtt:
       self.mqttClient.on_message = self.on_message
 
       worker = threading.Thread(target=self.mqttLooper, args=())
-      worker.setDaemon(True)
+      worker.daemon = True
       worker.start()
       while not self.mqttClient.is_connected():
         self.logger.info("Waiting for MQTT connection...")
