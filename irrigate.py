@@ -15,10 +15,26 @@ from suntime import Sun
 from datetime import datetime
 from datetime import timedelta
 from threading import Thread
+from schedule_simulator import ScheduleSimulator
 # from flask_app import run_flask_app
 
 def main(argv):
-  options, remainder = getopt.getopt(sys.argv[1:], "", ["config=", "test"])
+  # Check for --simulate flag (with or without =)
+  simulate_flag = False
+  simulateOptions = ""
+  
+  for arg in sys.argv[1:]:
+    if arg == "--simulate":
+      simulate_flag = True
+      break
+    elif arg.startswith("--simulate="):
+      simulate_flag = True
+      simulateOptions = arg.split("=", 1)[1]
+      break
+  
+  # Parse other options normally (filter out --simulate so getopt doesn't complain)
+  filtered_args = [arg for arg in sys.argv[1:] if not arg.startswith("--simulate")]
+  options, remainder = getopt.getopt(filtered_args, "", ["config=", "test"])
 
   configFilename = "config.json"
   test = False
@@ -30,6 +46,12 @@ def main(argv):
       test = True
 
   irrigate = Irrigate(configFilename)
+
+  if simulate_flag:
+    simulator = ScheduleSimulator(irrigate)
+    simulator.parse_schedule_options(simulateOptions)
+    simulator.print_schedule()
+    sys.exit(0)
 
   if test:
     irrigate.logger.info("Entering test mode. CTRL-C to exit...")
@@ -136,21 +158,16 @@ class Irrigate:
     self.timer.setDaemon(True)
     self.timer.setName("TimerTh")
 
-  def evalSched(self, sched, timezone, now):
-    todayStr = calendar.day_abbr[datetime.today().weekday()]
-    if len(sched.days) > 0 and todayStr not in sched.days:
-      return False
-
-    lat, lon = self.cfg.getLatLon()
-    if len(sched.seasons) > 0 and self.getSeason(lat) not in sched.seasons:
-      return False
-
+  def calculateScheduleTime(self, sched, now):
+    """Calculate when a schedule should trigger"""
     startTime = datetime.now()
-
+    timezone = self.cfg.timezone
+    
     if sched.time_based_on == 'fixed':
       hours, minutes = sched.fixed_start_time.split(":")
       startTime = startTime.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
     else:
+      lat, lon = self.cfg.getLatLon()
       sun = Sun(lat, lon)
       if self.everyXMinutes("eval_debuger", 60, True):
         self.logger.info(f"***")
@@ -167,6 +184,19 @@ class Irrigate:
        
       startTime = startTime.replace(year=now.year, month=now.month, day=now.day) # Hack, because sunset returns the wrong day for some reason
       startTime = startTime + timedelta(minutes=int(sched.offset_minutes))
+    
+    return startTime
+
+  def evalSched(self, sched, timezone, now):
+    todayStr = calendar.day_abbr[datetime.today().weekday()]
+    if len(sched.days) > 0 and todayStr not in sched.days:
+      return False
+
+    lat, lon = self.cfg.getLatLon()
+    if len(sched.seasons) > 0 and self.getSeason(lat) not in sched.seasons:
+      return False
+
+    startTime = self.calculateScheduleTime(sched, now)
 
     if startTime == now:
       return True
@@ -196,6 +226,23 @@ class Irrigate:
         season = "Summer"
 
     return season
+
+  def calculateJobDuration(self, valve, sched):
+    """Calculate job duration with UV adjustments if applicable"""
+    jobDuration = sched.duration
+    
+    if sched.enable_uv_adjustments:
+      try:
+        factor = self.uv_adjustments(valve.sensor.getUv())
+        if factor != 1:
+          self.logger.info(f"Job duration changed from '{sched.duration}' to '{jobDuration * factor}' based on input from sensor.")
+          jobDuration *= factor
+        self.clearTempStatus("SensorErr")
+      except Exception as ex:
+        self.setTempStatus("SensorErr")
+        self.logger.error("Error probing sensor (getUv) '%s': %s." % (valve.sensor.type, format(ex)))
+    
+    return jobDuration
 
   def valveThread(self):
     while not self.terminated:
@@ -339,17 +386,7 @@ class Irrigate:
               if aValve.schedules is not None:
                 for valveSched in aValve.schedules:
                   if self.evalSched(valveSched, self.cfg.timezone, now):
-                    jobDuration = valveSched.duration
-                    if valveSched.enable_uv_adjustments:
-                      try:
-                        factor = self.uv_adjustments(aValve.sensor.getUv())
-                        if factor != 1:
-                          jobDuration *= factor
-                          self.logger.info(f"Job duration changed from '{valveSched.duration}' to '{jobDuration}' based on input from sensor.")
-                        self.clearTempStatus("SensorErr")
-                      except Exception as ex:
-                        self.setTempStatus("SensorErr")
-                        self.logger.error("Error probing sensor (getUv) '%s': %s." % (valveSched.sensor.type, format(ex)))
+                    jobDuration = self.calculateJobDuration(aValve, valveSched)
                     job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched)
                     self.queueJob(job)
 
