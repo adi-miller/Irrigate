@@ -1,7 +1,6 @@
 import pytz
 import calendar
 from datetime import datetime, timedelta
-from suntime import Sun
 
 class ScheduleSimulator:
   """
@@ -165,6 +164,9 @@ class ScheduleSimulator:
     
     scheduled_jobs = []
     
+    # Get lat/lon once for all schedule checks
+    lat, lon = self.irrigate.cfg.getLatLon()
+    
     # Loop through each day in the simulation period
     for day_offset in range(self.simulate_days):
       sim_date = base_datetime + timedelta(days=day_offset)
@@ -174,23 +176,28 @@ class ScheduleSimulator:
           continue
           
         for sched in valve.schedules:
-          # Check day using simulation date
-          todayStr = calendar.day_abbr[sim_date.weekday()]
-          if len(sched.days) > 0 and todayStr not in sched.days:
-            continue
-          
-          # Check season using simulation logic
-          lat, lon = self.irrigate.cfg.getLatLon()
+          # Check if schedule should run (day and season validation)
           season = self.irrigate.getSeason(lat, sim_date) if day_offset > 0 else self.get_simulation_season(lat)
-          if len(sched.seasons) > 0 and season not in sched.seasons:
+          if not self.irrigate.shouldScheduleRun(sched, check_date=sim_date, check_season=season):
             continue
           
           # Calculate when this job would be queued (using simulation date)
-          schedule_time = self.calculate_schedule_time_for_simulation(sched, sim_date)
+          schedule_time = self.irrigate.calculateScheduleTime(sched, sim_date)
+          
+          # If time override is specified (single day simulation), filter jobs
+          # Only include jobs scheduled at or after the override time
+          if self.override_time and self.simulate_days == 1:
+            sim_datetime = self.get_simulation_datetime()
+            if schedule_time < sim_datetime:
+              continue  # Skip jobs that were scheduled before the simulation time
           
           # Calculate duration with UV adjustments (using simulation UV)
           base_duration = sched.duration
-          adjusted_duration = self.calculate_job_duration_for_simulation(valve, sched)
+          if sched.enable_uv_adjustments and hasattr(valve, 'sensor') and valve.sensor:
+            uv = self.get_simulation_uv(valve.sensor)
+            adjusted_duration = self.irrigate.calculateJobDuration(valve, sched, uv_override=uv)
+          else:
+            adjusted_duration = base_duration
           
           scheduled_jobs.append({
             'valve_name': valve_name,
@@ -205,49 +212,6 @@ class ScheduleSimulator:
     # Sort by scheduled time (queue order)
     scheduled_jobs.sort(key=lambda x: x['schedule_time'])
     return scheduled_jobs
-  
-  def calculate_schedule_time_for_simulation(self, sched, sim_now):
-    """Calculate when a schedule should trigger (using simulation datetime)"""
-    startTime = sim_now
-    timezone = self.irrigate.cfg.timezone
-    
-    if sched.time_based_on == 'fixed':
-      hours, minutes = sched.fixed_start_time.split(":")
-      startTime = startTime.replace(hour=int(hours), minute=int(minutes), 
-                                   second=0, microsecond=0)
-    else:
-      lat, lon = self.irrigate.cfg.getLatLon()
-      sun = Sun(lat, lon)
-      
-      if sched.time_based_on == 'sunrise':
-        startTime = sun.get_sunrise_time(at_date=sim_now, 
-                                        time_zone=pytz.timezone(timezone))
-      elif sched.time_based_on == 'sunset':
-        startTime = sun.get_sunset_time(at_date=sim_now, 
-                                       time_zone=pytz.timezone(timezone))
-      
-      startTime = startTime.replace(year=sim_now.year, month=sim_now.month, 
-                                   day=sim_now.day, second=0, microsecond=0)
-      startTime = startTime + timedelta(minutes=int(sched.offset_minutes))
-    
-    return startTime
-  
-  def calculate_job_duration_for_simulation(self, valve, sched):
-    """Calculate job duration with UV adjustments (using simulation UV)"""
-    jobDuration = sched.duration
-    
-    if sched.enable_uv_adjustments:
-      try:
-        if hasattr(valve, 'sensor') and valve.sensor:
-          uv = self.get_simulation_uv(valve.sensor)
-          factor = self.irrigate.uv_adjustments(uv)
-          if factor != 1:
-            self.logger.info(f"Job duration changed from '{sched.duration}' to '{jobDuration * factor}' based on UV index {uv}")
-            jobDuration *= factor
-      except Exception as ex:
-        self.logger.error("Error calculating UV adjustment '%s': %s." % (valve.sensor.type if hasattr(valve, 'sensor') else 'unknown', format(ex)))
-    
-    return jobDuration
   
   def simulate_queue_execution(self, scheduled_jobs):
     """Simulate queue execution to predict actual start/end times"""

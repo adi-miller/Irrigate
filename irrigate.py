@@ -159,41 +159,65 @@ class Irrigate:
     self.timer.setName("TimerTh")
 
   def calculateScheduleTime(self, sched, now):
-    """Calculate when a schedule should trigger"""
-    startTime = datetime.now()
+    """Calculate when a schedule should trigger
+    
+    Args:
+        sched: Schedule object with time configuration
+        now: datetime to use for schedule calculation
+    
+    Returns:
+        datetime when the schedule should trigger
+    """
     timezone = self.cfg.timezone
     
     if sched.time_based_on == 'fixed':
       hours, minutes = sched.fixed_start_time.split(":")
-      startTime = startTime.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0, tzinfo=pytz.timezone(timezone))
+      startTime = now.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
+      if not startTime.tzinfo:
+        startTime = startTime.replace(tzinfo=pytz.timezone(timezone))
     else:
       lat, lon = self.cfg.getLatLon()
       sun = Sun(lat, lon)
       if self.everyXMinutes("eval_debuger", 60, True):
         self.logger.info(f"***")
-        sunrise = sun.get_sunrise_time(at_date=startTime, time_zone=pytz.timezone(timezone))
+        sunrise = sun.get_sunrise_time(at_date=now, time_zone=pytz.timezone(timezone))
         sunrise = sunrise.replace(year=now.year, month=now.month, day=now.day)
-        sunset = sun.get_sunset_time(at_date=startTime, time_zone=pytz.timezone(timezone))
+        sunset = sun.get_sunset_time(at_date=now, time_zone=pytz.timezone(timezone))
         sunset = sunset.replace(year=now.year, month=now.month, day=now.day)
         self.logger.info(f"*** Sunrise: {sunrise}")
         self.logger.info(f"*** Sunset: {sunset}")
       if sched.time_based_on == 'sunrise':
-        startTime = sun.get_sunrise_time(at_date=startTime, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
+        startTime = sun.get_sunrise_time(at_date=now, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
       elif sched.time_based_on == 'sunset':
-        startTime = sun.get_sunset_time(at_date=startTime, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
+        startTime = sun.get_sunset_time(at_date=now, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
        
       startTime = startTime.replace(year=now.year, month=now.month, day=now.day) # Hack, because sunset returns the wrong day for some reason
       startTime = startTime + timedelta(minutes=int(sched.offset_minutes))
     
     return startTime
 
-  def evalSched(self, sched, timezone, now):
-    todayStr = calendar.day_abbr[datetime.today().weekday()]
+  def shouldScheduleRun(self, sched, check_date=None, check_season=None):
+    date_to_check = check_date if check_date else datetime.now()
+    todayStr = calendar.day_abbr[date_to_check.weekday()]
     if len(sched.days) > 0 and todayStr not in sched.days:
       return False
+    
+    # Check season
+    if len(sched.seasons) > 0:
+      if check_season:
+        season = check_season
+      else:
+        lat, lon = self.cfg.getLatLon()
+        season = self.getSeason(lat, date_to_check)
+      
+      if season not in sched.seasons:
+        return False
+    
+    return True
 
-    lat, lon = self.cfg.getLatLon()
-    if len(sched.seasons) > 0 and self.getSeason(lat) not in sched.seasons:
+  def evalSched(self, sched, timezone, now):
+    """Evaluate if schedule should trigger at the given time"""
+    if not self.shouldScheduleRun(sched, check_date=now):
       return False
 
     startTime = self.calculateScheduleTime(sched, now)
@@ -232,20 +256,34 @@ class Irrigate:
 
     return season
 
-  def calculateJobDuration(self, valve, sched):
+  def calculateJobDuration(self, valve, sched, uv_override=None):
     """Calculate job duration with UV adjustments if applicable"""
     jobDuration = sched.duration
     
     if sched.enable_uv_adjustments:
       try:
-        factor = self.uv_adjustments(valve.sensor.getUv())
+        # Get UV from override or sensor
+        if uv_override is not None:
+          uv = uv_override
+        else:
+          uv = valve.sensor.getUv()
+        
+        factor = self.uv_adjustments(uv)
         if factor != 1:
-          self.logger.info(f"Job duration changed from '{sched.duration}' to '{jobDuration * factor}' based on input from sensor.")
+          self.logger.info(f"Job duration changed from '{sched.duration}' to '{jobDuration * factor}' based on UV index {uv}.")
           jobDuration *= factor
-        self.clearTempStatus("SensorErr")
+        
+        # Only track status when calling real sensor (operational mode)
+        if uv_override is None:
+          self.clearTempStatus("SensorErr")
+          
       except Exception as ex:
-        self.setTempStatus("SensorErr")
-        self.logger.error("Error probing sensor (getUv) '%s': %s." % (valve.sensor.type, format(ex)))
+        # Only track status when calling real sensor (operational mode)
+        if uv_override is None:
+          self.setTempStatus("SensorErr")
+        
+        self.logger.error("Error calculating UV adjustment '%s': %s." % 
+                        (valve.sensor.type if hasattr(valve, 'sensor') else 'unknown', format(ex)))
     
     return jobDuration
 
