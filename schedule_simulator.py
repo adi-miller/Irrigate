@@ -104,6 +104,9 @@ class ScheduleSimulator:
         sim_dt = sim_dt.replace(year=self.override_date.year, 
                                 month=self.override_date.month, 
                                 day=self.override_date.day)
+        # If date is specified but no time, default to 00:00:00
+        if not self.override_time:
+          sim_dt = sim_dt.replace(hour=0, minute=0, second=0, microsecond=0)
       
       # Override time if specified
       if self.override_time:
