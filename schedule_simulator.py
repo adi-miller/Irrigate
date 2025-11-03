@@ -184,9 +184,9 @@ class ScheduleSimulator:
           # Calculate when this job would be queued (using simulation date)
           schedule_time = self.irrigate.calculateScheduleTime(sched, sim_date)
           
-          # If time override is specified (single day simulation), filter jobs
-          # Only include jobs scheduled at or after the override time
-          if self.override_time and self.simulate_days == 1:
+          # For single day simulation, filter jobs by time
+          # Only include jobs scheduled at or after the simulation time
+          if self.simulate_days == 1:
             sim_datetime = self.get_simulation_datetime()
             if schedule_time < sim_datetime:
               continue  # Skip jobs that were scheduled before the simulation time
