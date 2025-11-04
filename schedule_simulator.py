@@ -93,7 +93,8 @@ class ScheduleSimulator:
   
   def get_simulation_datetime(self):
     """Get the datetime to use for simulation (either override or current)"""
-    now = datetime.now().replace(tzinfo=pytz.timezone(self.irrigate.cfg.timezone))
+    tz = pytz.timezone(self.irrigate.cfg.timezone)
+    now = tz.localize(datetime.now())
     
     if self.override_date or self.override_time:
       # Start with current datetime

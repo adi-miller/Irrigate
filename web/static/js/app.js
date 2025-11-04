@@ -2,7 +2,10 @@
 
 let currentTab = 'valves';
 let refreshInterval = null;
+let nextRunsInterval = null;
 let statusData = null;
+let nextRunsData = null;
+let lastNextRunsUpdate = 0;
 
 // ==================== INITIALIZATION ====================
 
@@ -11,9 +14,13 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initial load
     loadStatus();
+    loadNextRuns();  // Initial load of next scheduled runs
     
     // Auto-refresh every 5 seconds
     refreshInterval = setInterval(loadStatus, 5000);
+    
+    // Refresh next runs every 2 minutes
+    nextRunsInterval = setInterval(loadNextRuns, 120000);
     
     // Setup simulate form
     const simForm = document.getElementById('simulate-form');
@@ -96,6 +103,22 @@ async function loadStatus() {
         
     } catch (error) {
         console.error('Failed to load status:', error);
+    }
+}
+
+async function loadNextRuns() {
+    try {
+        const data = await apiCall('/api/next-runs');
+        nextRunsData = data.next_runs;
+        lastNextRunsUpdate = Date.now();
+        
+        // Re-render valves if we're on the valves tab to show updated next run info
+        if (currentTab === 'valves' && statusData) {
+            const queueData = await apiCall('/api/queue');
+            renderValves(statusData.valves, queueData);
+        }
+    } catch (error) {
+        console.error('Failed to load next runs:', error);
     }
 }
 
@@ -196,6 +219,10 @@ function renderValves(valves, queueData = null) {
         const progress = valve.seconds_duration > 0 ? 
             (valve.seconds_remain / valve.seconds_duration * 100) : 0;
         
+        // Get next scheduled run for this valve
+        const nextRun = nextRunsData && nextRunsData[valve.name];
+        const nextRunFormatted = nextRun ? formatNextRun(nextRun.schedule_time_iso) : null;
+        
         return `
             <div class="valve-card" id="valve-${valve.name}">
                 <div class="valve-header">
@@ -226,6 +253,20 @@ function renderValves(valves, queueData = null) {
                             ${valve.liters_daily > 0 ? ` / ${valve.liters_daily.toFixed(1)}L` : ''}
                         </span>
                     </div>
+                    
+                    ${nextRunFormatted ? `
+                        <div class="valve-info-row next-run-row">
+                            <span class="valve-info-label">Next Run:</span>
+                            <span class="valve-info-value next-run-time">📅 ${nextRunFormatted}</span>
+                        </div>
+                    ` : `
+                        <div class="valve-info-row next-run-row">
+                            <span class="valve-info-label">Next Run:</span>
+                            <span class="valve-info-value next-run-none">
+                                ${!valve.enabled ? 'Disabled' : (valve.suspended ? 'Suspended' : 'None in 7 days')}
+                            </span>
+                        </div>
+                    `}
                 </div>
                 
                 <div class="valve-actions">
@@ -299,6 +340,53 @@ function formatTime(seconds) {
     }
 }
 
+function formatNextRun(isoString) {
+    if (!isoString) return null;
+    
+    const scheduleTime = new Date(isoString);
+    const now = new Date();
+    
+    // Reset times to start of day for accurate day comparison
+    const scheduleDate = new Date(scheduleTime.getFullYear(), scheduleTime.getMonth(), scheduleTime.getDate());
+    const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Calculate difference in days
+    const diffMs = scheduleDate - todayDate;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    
+    // Format time
+    const timeStr = scheduleTime.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+    });
+    
+    let dayStr;
+    
+    // If today
+    if (diffDays === 0) {
+        dayStr = 'Today';
+    }
+    // If tomorrow
+    else if (diffDays === 1) {
+        dayStr = 'Tomorrow';
+    }
+    // If within a week (2-6 days), show day name
+    else if (diffDays >= 2 && diffDays < 7) {
+        dayStr = scheduleTime.toLocaleDateString('en-US', { weekday: 'short' });
+    }
+    // Otherwise show date
+    else {
+        dayStr = scheduleTime.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric' 
+        });
+    }
+    
+    // Use middle dot as separator
+    return `${dayStr} • ${timeStr}`;
+}
+
 // ==================== VALVE ACTIONS ====================
 
 async function startValveManual(name) {
@@ -340,6 +428,7 @@ async function enableValve(name) {
         await apiCall(`/api/valves/${name}/enable`, { method: 'POST' });
         showToast(`Valve ${name} enabled`, 'success');
         loadStatus();
+        loadNextRuns();  // Refresh next runs since schedule availability changed
     } catch (error) {
         console.error('Failed to enable valve:', error);
     }
@@ -350,6 +439,7 @@ async function disableValve(name) {
         await apiCall(`/api/valves/${name}/disable`, { method: 'POST' });
         showToast(`Valve ${name} disabled`, 'warning');
         loadStatus();
+        loadNextRuns();  // Refresh next runs since schedule availability changed
     } catch (error) {
         console.error('Failed to disable valve:', error);
     }
@@ -360,6 +450,7 @@ async function suspendValve(name) {
         await apiCall(`/api/valves/${name}/suspend`, { method: 'POST' });
         showToast(`Valve ${name} suspended`, 'warning');
         loadStatus();
+        loadNextRuns();  // Refresh next runs since schedule availability changed
     } catch (error) {
         console.error('Failed to suspend valve:', error);
     }
@@ -370,6 +461,7 @@ async function resumeValve(name) {
         await apiCall(`/api/valves/${name}/resume`, { method: 'POST' });
         showToast(`Valve ${name} resumed`, 'success');
         loadStatus();
+        loadNextRuns();  // Refresh next runs since schedule availability changed
     } catch (error) {
         console.error('Failed to resume valve:', error);
     }

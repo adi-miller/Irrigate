@@ -1,18 +1,102 @@
 import uvicorn
 import model
+import pytz
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from schedule_simulator import ScheduleSimulator
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
 app = FastAPI(title="Irrigate API", version="1.0.0")
 
 # Global reference to Irrigate instance
 irrigate_instance = None
 
+# Cache for next scheduled runs
+# Structure: {"data": {...}, "timestamp": float, "ttl": int}
+next_runs_cache = {"data": None, "timestamp": 0, "ttl": 300}  # 5 minute TTL
 
-# ==================== STATUS ENDPOINTS ====================
+def invalidate_next_runs_cache():
+    """Invalidate the next scheduled runs cache"""
+    global next_runs_cache
+    next_runs_cache["timestamp"] = 0
+    next_runs_cache["data"] = None
+
+
+def is_cache_valid():
+    """Check if the next runs cache is still valid"""
+    if next_runs_cache["data"] is None:
+        return False
+    age = time.time() - next_runs_cache["timestamp"]
+    return age < next_runs_cache["ttl"]
+
+
+def get_next_scheduled_runs():
+    global next_runs_cache
+    
+    if is_cache_valid():
+        return next_runs_cache["data"]
+    
+    result = {}
+    
+    try:
+        tz = pytz.timezone(irrigate_instance.cfg.timezone)
+        now = tz.localize(datetime.now())
+        tomorrow = now + timedelta(days=1)
+        tomorrow_midnight = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        all_jobs = []
+        
+        # Simulation 1: Today from now onwards
+        simulator_today = ScheduleSimulator(irrigate_instance)
+        simulator_today.override_time = now.time()
+        jobs_today = simulator_today.get_scheduled_jobs_for_simulation()
+        all_jobs.extend(jobs_today)
+        
+        # Simulation 2: Next 6 full days (tomorrow through day 6)
+        simulator_future = ScheduleSimulator(irrigate_instance)
+        simulator_future.simulate_days = 6
+        simulator_future.override_date = tomorrow_midnight.date()
+        simulator_future.override_time = tomorrow_midnight.time()
+        jobs_future = simulator_future.get_scheduled_jobs_for_simulation()
+        all_jobs.extend(jobs_future)
+        
+        # Find the earliest job for each valve
+        for job in all_jobs:
+            valve_name = job['valve_name']
+            schedule_time = job['schedule_time']
+            
+            # Find the schedule index in the valve's schedules
+            valve = job['valve']
+            schedule_obj = job['schedule']
+            schedule_index = 0
+            for idx, sched in enumerate(valve.schedules):
+                if sched is schedule_obj:
+                    schedule_index = idx
+                    break
+            
+            # Only keep the earliest run for each valve
+            if valve_name not in result or schedule_time < result[valve_name]['schedule_time']:
+                result[valve_name] = {
+                    'schedule_time': schedule_time,
+                    'schedule_time_iso': schedule_time.isoformat(),
+                    'duration_minutes': job['duration_minutes'],
+                    'schedule_index': schedule_index
+                }
+        
+        # Update cache
+        next_runs_cache["data"] = result
+        next_runs_cache["timestamp"] = time.time()
+        
+        return result
+        
+    except Exception as ex:
+        irrigate_instance.logger.error(f"Error calculating next scheduled runs: {ex}")
+        import traceback
+        irrigate_instance.logger.error(traceback.format_exc())
+        return {}
+
 
 @app.get("/api/status")
 async def get_full_status():
@@ -111,7 +195,7 @@ async def get_valve_details(valve_name: str):
             "seasons": s.seasons if hasattr(s, 'seasons') else [],
             "days": s.days if hasattr(s, 'days') else [],
             "time_based_on": s.time_based_on,
-            "offset_minutes": s.offset_minutes,
+            "offset_minutes": s.offset_minutes if hasattr(s, 'offset_minutes') else 0,
             "duration": s.duration,
             "enable_uv_adjustments": s.enable_uv_adjustments
         })
@@ -131,6 +215,21 @@ async def get_valve_details(valve_name: str):
         "liters_last": v.litersLast if hasattr(v, 'litersLast') else 0,
         "schedules": schedules,
         "has_waterflow": v.waterflow is not None
+    }
+
+
+@app.get("/api/next-runs")
+async def get_next_runs():
+    """Get next scheduled run for each valve (cached for efficiency)"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    next_runs = get_next_scheduled_runs()
+    
+    return {
+        "next_runs": next_runs,
+        "cache_age_seconds": int(time.time() - next_runs_cache["timestamp"]) if next_runs_cache["data"] else 0,
+        "cache_ttl_seconds": next_runs_cache["ttl"]
     }
 
 
@@ -219,8 +318,6 @@ async def get_config():
     }
 
 
-# ==================== VALVE CONTROL ENDPOINTS ====================
-
 @app.post("/api/valves/{valve_name}/start-manual")
 async def start_valve_manual(valve_name: str, duration_minutes: float = 5):
     """Immediately open valve (bypass queue, no concurrency check)"""
@@ -296,6 +393,8 @@ async def enable_valve(valve_name: str):
     valve.enabled = True
     irrigate_instance.logger.info(f"Valve '{valve_name}' enabled")
     
+    invalidate_next_runs_cache()
+    
     return {"success": True, "valve": valve_name, "action": "enabled"}
 
 
@@ -311,6 +410,8 @@ async def disable_valve(valve_name: str):
     valve = irrigate_instance.valves[valve_name]
     valve.enabled = False
     irrigate_instance.logger.info(f"Valve '{valve_name}' disabled")
+    
+    invalidate_next_runs_cache()
     
     return {"success": True, "valve": valve_name, "action": "disabled"}
 
@@ -328,6 +429,8 @@ async def suspend_valve(valve_name: str):
     valve.suspended = True
     irrigate_instance.logger.info(f"Valve '{valve_name}' suspended")
     
+    invalidate_next_runs_cache()
+    
     return {"success": True, "valve": valve_name, "action": "suspended"}
 
 
@@ -344,10 +447,10 @@ async def resume_valve(valve_name: str):
     valve.suspended = False
     irrigate_instance.logger.info(f"Valve '{valve_name}' resumed")
     
+    invalidate_next_runs_cache()
+    
     return {"success": True, "valve": valve_name, "action": "resumed"}
 
-
-# ==================== SIMULATION ENDPOINT (EXISTING) ====================
 
 @app.post("/api/simulate", response_class=PlainTextResponse)
 async def simulate_schedule(
@@ -402,8 +505,6 @@ async def simulate_schedule(
         return f"ERROR: {str(ex)}", 500
 
 
-# ==================== FRONTEND SERVING ====================
-
 # Serve static files
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
 
@@ -412,8 +513,6 @@ async def serve_frontend():
     """Serve the main web UI"""
     return FileResponse('web/index.html')
 
-
-# ==================== SERVER STARTUP ====================
 
 def run_api_server(irrigate, host="0.0.0.0", port=8000):
     global irrigate_instance

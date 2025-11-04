@@ -175,22 +175,27 @@ class Irrigate:
       hours, minutes = sched.fixed_start_time.split(":")
       startTime = now.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
       if not startTime.tzinfo:
-        startTime = startTime.replace(tzinfo=pytz.timezone(timezone))
+        tz = pytz.timezone(timezone)
+        startTime = tz.normalize(startTime.replace(tzinfo=tz))
     else:
       lat, lon = self.cfg.getLatLon()
       sun = Sun(lat, lon)
+      # Sun library requires naive datetime, so remove tzinfo
+      now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+      tz = pytz.timezone(timezone)
+      
       if self.everyXMinutes("eval_debuger", 60, True):
         self.logger.info(f"***")
-        sunrise = sun.get_sunrise_time(at_date=now, time_zone=pytz.timezone(timezone))
+        sunrise = sun.get_sunrise_time(at_date=now_naive, time_zone=tz)
         sunrise = sunrise.replace(year=now.year, month=now.month, day=now.day)
-        sunset = sun.get_sunset_time(at_date=now, time_zone=pytz.timezone(timezone))
+        sunset = sun.get_sunset_time(at_date=now_naive, time_zone=tz)
         sunset = sunset.replace(year=now.year, month=now.month, day=now.day)
         self.logger.info(f"*** Sunrise: {sunrise}")
         self.logger.info(f"*** Sunset: {sunset}")
       if sched.time_based_on == 'sunrise':
-        startTime = sun.get_sunrise_time(at_date=now, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
+        startTime = sun.get_sunrise_time(at_date=now_naive, time_zone=tz).replace(second=0, microsecond=0)
       elif sched.time_based_on == 'sunset':
-        startTime = sun.get_sunset_time(at_date=now, time_zone=pytz.timezone(timezone)).replace(second=0, microsecond=0)
+        startTime = sun.get_sunset_time(at_date=now_naive, time_zone=tz).replace(second=0, microsecond=0)
        
       startTime = startTime.replace(year=now.year, month=now.month, day=now.day) # Hack, because sunset returns the wrong day for some reason
       startTime = startTime + timedelta(minutes=int(sched.offset_minutes))
@@ -392,7 +397,8 @@ class Irrigate:
   def timerThread(self):
     try:
       while True:
-        now = datetime.now().replace(tzinfo=pytz.timezone(self.cfg.timezone), second=0, microsecond=0)
+        tz = pytz.timezone(self.cfg.timezone)
+        now = tz.localize(datetime.now().replace(second=0, microsecond=0))
 
         if now.hour == 0 and now.minute == 0:
           for aValve in self.valves.values():
