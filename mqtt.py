@@ -15,13 +15,8 @@ class Mqtt:
     self.logger.info("Connecting to MQTT service '%s'..." % self.cfg.mqttHostName)
     try:
       self.mqttClient = self.getMyMqtt()
-
-      topicPrefix = str(self.cfg.mqttClientName) + "/"
-      self.registerTopics(topicPrefix, "queue")
-      self.registerTopics(topicPrefix, "suspend")
-      self.registerTopics(topicPrefix, "enabled")
-      self.registerTopics(topicPrefix, "forceopen")
-      self.registerTopics(topicPrefix, "forceclose")
+      self.topicPrefix = str(self.cfg.mqttClientName) + "/"
+      
       self.mqttClient.on_message = self.on_message
 
       worker = threading.Thread(target=self.mqttLooper, args=())
@@ -68,8 +63,14 @@ class Mqtt:
 
   def on_connect(self, client, userdata, flags, rc):
     if rc == 0:
-      self.logger.info("Connected to MQTT Broker.")
+      self.logger.info("Connected to MQTT Broker. Registering subscriptions...")
       self.mqttStarted = True
+      # Re-register all subscriptions on every connect/reconnect
+      self.registerTopics(self.topicPrefix, "queue")
+      self.registerTopics(self.topicPrefix, "suspend")
+      self.registerTopics(self.topicPrefix, "enabled")
+      self.registerTopics(self.topicPrefix, "forceopen")
+      self.registerTopics(self.topicPrefix, "forceclose")
     else:
       self.logger.error("Failed to connect, return code %d\n" % (rc))
 

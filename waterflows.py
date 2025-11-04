@@ -63,7 +63,6 @@ class MqttWaterflow(BaseWaterflow):
     self.logger.info("MqttWaterflow '%s' connecting to '%s'..." % (self.type, self.config.hostname))
     try:
       self.mqttClient = self.getMyMqtt()
-      self.mqttClient.subscribe(self.config.topic)
       self.mqttClient.on_message = self.on_message
       worker = threading.Thread(target=self.mqttLooper, args=())
       worker.daemon = True
@@ -87,7 +86,10 @@ class MqttWaterflow(BaseWaterflow):
 
   def on_connect(self, client, userdata, flags, rc):
     if rc == 0:
-      self.logger.info("MqttWaterflow connected to MQTT Broker.")
+      self.logger.info("MqttWaterflow connected to MQTT Broker. Subscribing to topic...")
+      # Re-subscribe on every connect/reconnect
+      self.mqttClient.subscribe(self.config.topic)
+      self.logger.info("MqttWaterflow subscribed to topic '%s'" % self.config.topic)
     else:
       self.logger.error("MqttWaterflow failed to connect, return code %d" % rc)
 
