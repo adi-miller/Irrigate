@@ -1,13 +1,319 @@
 import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+import model
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from schedule_simulator import ScheduleSimulator
+from datetime import datetime
 
 app = FastAPI(title="Irrigate API", version="1.0.0")
 
 # Global reference to Irrigate instance
 irrigate_instance = None
 
+
+# ==================== STATUS ENDPOINTS ====================
+
+@app.get("/api/status")
+async def get_full_status():
+    """Get complete system status"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    # Return raw properties - let the UI determine status strings
+    valves = []
+    for name, v in irrigate_instance.valves.items():
+        valves.append({
+            "name": name,
+            "enabled": v.enabled,
+            "suspended": v.suspended,
+            "is_open": v.is_open,
+            "handled": v.handled,
+            "seconds_daily": v.secondsDaily,
+            "liters_daily": v.litersDaily,
+            "seconds_remain": v.secondsRemain,
+            "seconds_last": v.secondsLast if hasattr(v, 'secondsLast') else 0,
+            "liters_last": v.litersLast if hasattr(v, 'litersLast') else 0,
+        })
+    
+    sensors = []
+    for name, s in irrigate_instance.sensors.items():
+        sensor_data = {
+            "name": name,
+            "type": s.type if hasattr(s, 'type') else "unknown",
+            "enabled": s.enabled if hasattr(s, 'enabled') else False,
+        }
+        
+        # Try to get sensor methods (may fail if sensor has errors)
+        try:
+            sensor_data["should_disable"] = s.shouldDisable() if hasattr(s, 'shouldDisable') else False
+            sensor_data["factor"] = s.getFactor() if hasattr(s, 'getFactor') else 1.0
+            sensor_data["telemetry"] = s.getTelemetry() if hasattr(s, 'getTelemetry') else {}
+        except Exception:
+            sensor_data["should_disable"] = None
+            sensor_data["factor"] = None
+            sensor_data["telemetry"] = {}
+            sensor_data["error"] = True
+        
+        sensors.append(sensor_data)
+    
+    return {
+        "system": {
+            "status": irrigate_instance._status,
+            "temp_status": list(irrigate_instance._tempStatus.keys()),
+            "uptime_minutes": int((datetime.now() - irrigate_instance.startTime).total_seconds() / 60),
+            "started_at": irrigate_instance.startTime.isoformat()
+        },
+        "valves": valves,
+        "sensors": sensors,
+        "waterflow": {
+            "enabled": irrigate_instance.waterflow.enabled if irrigate_instance.waterflow else False,
+        }
+    }
+
+
+@app.get("/api/valves")
+async def get_valves():
+    """Get all valves summary"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    valves = []
+    for name, v in irrigate_instance.valves.items():
+        valves.append({
+            "name": name,
+            "enabled": v.enabled,
+            "suspended": v.suspended,
+            "is_open": v.is_open,
+            "seconds_remain": v.secondsRemain,
+        })
+    
+    return {"valves": valves}
+
+
+@app.get("/api/valves/{valve_name}")
+async def get_valve_details(valve_name: str):
+    """Get detailed valve information"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    v = irrigate_instance.valves[valve_name]
+    
+    # Build schedules array
+    schedules = []
+    for i, s in enumerate(v.schedules):
+        schedules.append({
+            "index": i,
+            "seasons": s.seasons if hasattr(s, 'seasons') else [],
+            "days": s.days if hasattr(s, 'days') else [],
+            "time_based_on": s.time_based_on,
+            "offset_minutes": s.offset_minutes,
+            "duration": s.duration,
+            "enable_uv_adjustments": s.enable_uv_adjustments
+        })
+    
+    return {
+        "name": v.name,
+        "type": v.config.type,
+        "enabled": v.enabled,
+        "suspended": v.suspended,
+        "is_open": v.is_open,
+        "handled": v.handled,
+        "sensor_name": v.sensor.config.name if hasattr(v, 'sensor') else None,
+        "seconds_daily": v.secondsDaily,
+        "liters_daily": v.litersDaily,
+        "seconds_remain": v.secondsRemain,
+        "seconds_last": v.secondsLast if hasattr(v, 'secondsLast') else 0,
+        "liters_last": v.litersLast if hasattr(v, 'litersLast') else 0,
+        "schedules": schedules,
+        "has_waterflow": v.waterflow is not None
+    }
+
+
+@app.get("/api/sensors")
+async def get_sensors():
+    """Get all sensor data"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    sensors = []
+    for name, s in irrigate_instance.sensors.items():
+        sensor_data = {
+            "name": name,
+            "type": s.type if hasattr(s, 'type') else "unknown",
+            "enabled": s.enabled if hasattr(s, 'enabled') else False,
+        }
+        
+        try:
+            sensor_data["should_disable"] = s.shouldDisable() if hasattr(s, 'shouldDisable') else False
+            sensor_data["factor"] = s.getFactor() if hasattr(s, 'getFactor') else 1.0
+            sensor_data["telemetry"] = s.getTelemetry() if hasattr(s, 'getTelemetry') else {}
+        except Exception:
+            sensor_data["error"] = True
+        
+        sensors.append(sensor_data)
+    
+    return {"sensors": sensors}
+
+
+@app.get("/api/config")
+async def get_config():
+    """Get system configuration (read-only)"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    cfg = irrigate_instance.cfg
+    return {
+        "timezone": cfg.timezone,
+        "location": {
+            "latitude": cfg.latitude,
+            "longitude": cfg.longitude
+        },
+        "max_concurrent_valves": cfg.valvesConcurrency,
+        "telemetry_enabled": cfg.telemetry,
+        "mqtt_enabled": cfg.mqttEnabled,
+        "uv_adjustments": [
+            {"max_uv_index": adj.max_uv_index, "multiplier": adj.multiplier}
+            for adj in cfg.cfg.uv_adjustments
+        ],
+        "valve_count": len(irrigate_instance.valves),
+        "sensor_count": len(irrigate_instance.sensors)
+    }
+
+
+# ==================== VALVE CONTROL ENDPOINTS ====================
+
+@app.post("/api/valves/{valve_name}/start-manual")
+async def start_valve_manual(valve_name: str, duration_minutes: float = 5):
+    """Immediately open valve (bypass queue, no concurrency check)"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    valve.handler.open()
+    irrigate_instance.logger.info(f"Manual start: Valve '{valve_name}' opened for {duration_minutes} minutes")
+    
+    return {
+        "success": True,
+        "valve": valve_name,
+        "duration_minutes": duration_minutes,
+        "action": "opened_manual"
+    }
+
+
+@app.post("/api/valves/{valve_name}/queue")
+async def queue_valve(valve_name: str, duration_minutes: float):
+    """Queue a job for this valve (respects concurrency)"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    job = model.Job(valve=valve, duration=duration_minutes, sched=None)
+    irrigate_instance.queueJob(job)
+    
+    return {
+        "success": True,
+        "valve": valve_name,
+        "duration_minutes": duration_minutes,
+        "action": "queued",
+        "queued_at": datetime.now().isoformat()
+    }
+
+
+@app.post("/api/valves/{valve_name}/stop")
+async def stop_valve(valve_name: str):
+    """Immediately close valve"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    valve.handler.close()
+    irrigate_instance.logger.info(f"Manual stop: Valve '{valve_name}' closed")
+    
+    return {
+        "success": True,
+        "valve": valve_name,
+        "action": "closed"
+    }
+
+
+@app.post("/api/valves/{valve_name}/enable")
+async def enable_valve(valve_name: str):
+    """Enable valve"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    valve.enabled = True
+    irrigate_instance.logger.info(f"Valve '{valve_name}' enabled")
+    
+    return {"success": True, "valve": valve_name, "action": "enabled"}
+
+
+@app.post("/api/valves/{valve_name}/disable")
+async def disable_valve(valve_name: str):
+    """Disable valve"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    valve.enabled = False
+    irrigate_instance.logger.info(f"Valve '{valve_name}' disabled")
+    
+    return {"success": True, "valve": valve_name, "action": "disabled"}
+
+
+@app.post("/api/valves/{valve_name}/suspend")
+async def suspend_valve(valve_name: str):
+    """Suspend valve"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    valve.suspended = True
+    irrigate_instance.logger.info(f"Valve '{valve_name}' suspended")
+    
+    return {"success": True, "valve": valve_name, "action": "suspended"}
+
+
+@app.post("/api/valves/{valve_name}/resume")
+async def resume_valve(valve_name: str):
+    """Resume valve"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    valve.suspended = False
+    irrigate_instance.logger.info(f"Valve '{valve_name}' resumed")
+    
+    return {"success": True, "valve": valve_name, "action": "resumed"}
+
+
+# ==================== SIMULATION ENDPOINT (EXISTING) ====================
 
 @app.post("/api/simulate", response_class=PlainTextResponse)
 async def simulate_schedule(
@@ -62,12 +368,26 @@ async def simulate_schedule(
         return f"ERROR: {str(ex)}", 500
 
 
+# ==================== FRONTEND SERVING ====================
+
+# Serve static files
+app.mount("/static", StaticFiles(directory="web/static"), name="static")
+
+@app.get("/")
+async def serve_frontend():
+    """Serve the main web UI"""
+    return FileResponse('web/index.html')
+
+
+# ==================== SERVER STARTUP ====================
+
 def run_api_server(irrigate, host="0.0.0.0", port=8000):
     global irrigate_instance
     irrigate_instance = irrigate
     
     irrigate.logger.info(f"Starting FastAPI server on {host}:{port}")
     irrigate.logger.info(f"API documentation available at http://{host}:{port}/docs")
+    irrigate.logger.info(f"Web UI available at http://{host}:{port}/")
     
     # Configure uvicorn to run without reloader (important for threading)
     config = uvicorn.Config(
@@ -75,8 +395,8 @@ def run_api_server(irrigate, host="0.0.0.0", port=8000):
         host=host,
         port=port,
         log_level="info",
-        access_log=True,   # Disable access logs to avoid clutter
-        use_colors=True     # Enable colors in logs for better readability
+        access_log=True,
+        use_colors=True
     )
     server = uvicorn.Server(config)
     server.run()
