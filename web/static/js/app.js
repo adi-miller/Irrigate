@@ -6,6 +6,7 @@ let nextRunsInterval = null;
 let statusData = null;
 let nextRunsData = null;
 let lastNextRunsUpdate = 0;
+let openSchedulePanels = new Set(); // Track which schedule panels are open
 
 // ==================== INITIALIZATION ====================
 
@@ -752,11 +753,20 @@ async function toggleSchedulePanel(name) {
     // If panel is already visible, hide it
     if (panel.style.display !== 'none') {
         panel.style.display = 'none';
+        openSchedulePanels.delete(name);
         return;
     }
     
     // Show panel and load schedule data
     panel.style.display = 'block';
+    openSchedulePanels.add(name);
+    
+    await loadSchedulePanelData(name);
+}
+
+async function loadSchedulePanelData(name) {
+    const panel = document.getElementById(`schedule-panel-${name}`);
+    if (!panel) return;
     
     try {
         const details = await apiCall(`/api/valves/${name}`);
@@ -842,6 +852,13 @@ async function toggleSchedulePanel(name) {
         `;
         console.error('Failed to load valve schedules:', error);
     }
+}
+
+function refreshOpenSchedulePanels() {
+    // Reload data for any open schedule panels
+    openSchedulePanels.forEach(name => {
+        loadSchedulePanelData(name);
+    });
 }
 
 // ==================== SENSOR RENDERING ====================
@@ -1261,6 +1278,12 @@ async function addSchedule(valveName) {
         const newIdx = result.schedule_index;
         editSchedule(valveName, newIdx);
         
+        // Refresh any open schedule panels in the valves view
+        refreshOpenSchedulePanels();
+        
+        // Reload next runs to update the display
+        await loadNextRuns();
+        
     } catch (error) {
         console.error('Failed to add schedule:', error);
     }
@@ -1331,8 +1354,14 @@ async function saveSchedule(event, valveName, idx) {
         
         showToast(`Schedule updated for ${valveName}`, 'success');
         
-        // Reload the schedules
+        // Reload the schedules for the config page
         await loadValveSchedules(valveName);
+        
+        // Refresh any open schedule panels in the valves view
+        refreshOpenSchedulePanels();
+        
+        // Reload next runs to update the display
+        await loadNextRuns();
         
     } catch (error) {
         console.error('Failed to save schedule:', error);
@@ -1351,8 +1380,14 @@ async function deleteSchedule(valveName, idx) {
         
         showToast(`Schedule deleted from ${valveName}`, 'success');
         
-        // Reload the schedules
+        // Reload the schedules for the config page
         await loadValveSchedules(valveName);
+        
+        // Refresh any open schedule panels in the valves view
+        refreshOpenSchedulePanels();
+        
+        // Reload next runs to update the display
+        await loadNextRuns();
         
     } catch (error) {
         console.error('Failed to delete schedule:', error);

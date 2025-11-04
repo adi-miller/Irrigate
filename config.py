@@ -109,19 +109,27 @@ class Config:
             for schedule in valve_obj.schedules:
               sched_dict = {}
               
-              # Add all schedule fields
+              # Add time_based_on first
+              if hasattr(schedule, 'time_based_on'):
+                sched_dict['time_based_on'] = schedule.time_based_on
+                
+                # Add appropriate time fields based on time_based_on
+                if schedule.time_based_on == 'fixed':
+                  if hasattr(schedule, 'fixed_start_time'):
+                    sched_dict['fixed_start_time'] = schedule.fixed_start_time
+                  # Do NOT include offset_minutes for fixed time
+                else:  # sunrise or sunset
+                  if hasattr(schedule, 'offset_minutes'):
+                    sched_dict['offset_minutes'] = schedule.offset_minutes
+                  # Do NOT include fixed_start_time for sunrise/sunset
+              
+              # Add other schedule fields
+              if hasattr(schedule, 'duration'):
+                sched_dict['duration'] = schedule.duration
               if hasattr(schedule, 'seasons') and schedule.seasons:
                 sched_dict['seasons'] = schedule.seasons
               if hasattr(schedule, 'days') and schedule.days:
                 sched_dict['days'] = schedule.days
-              if hasattr(schedule, 'time_based_on'):
-                sched_dict['time_based_on'] = schedule.time_based_on
-              if hasattr(schedule, 'fixed_start_time'):
-                sched_dict['fixed_start_time'] = schedule.fixed_start_time
-              if hasattr(schedule, 'offset_minutes'):
-                sched_dict['offset_minutes'] = schedule.offset_minutes
-              if hasattr(schedule, 'duration'):
-                sched_dict['duration'] = schedule.duration
               if hasattr(schedule, 'enable_uv_adjustments'):
                 sched_dict['enable_uv_adjustments'] = schedule.enable_uv_adjustments
               

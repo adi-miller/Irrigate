@@ -412,6 +412,10 @@ async def enable_valve(valve_name: str):
     
     valve = irrigate_instance.valves[valve_name]
     valve.enabled = True
+    
+    # Persist changes to config file
+    irrigate_instance.cfg.save_runtime_config()
+    
     irrigate_instance.logger.info(f"Valve '{valve_name}' enabled")
     
     invalidate_next_runs_cache()
@@ -430,6 +434,10 @@ async def disable_valve(valve_name: str):
     
     valve = irrigate_instance.valves[valve_name]
     valve.enabled = False
+    
+    # Persist changes to config file
+    irrigate_instance.cfg.save_runtime_config()
+    
     irrigate_instance.logger.info(f"Valve '{valve_name}' disabled")
     
     invalidate_next_runs_cache()
