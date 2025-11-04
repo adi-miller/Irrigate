@@ -256,68 +256,74 @@ class ScheduleSimulator:
     scheduled_jobs = self.get_scheduled_jobs_for_simulation()
     return self.simulate_queue_execution(scheduled_jobs)
   
-  def print_schedule(self):
-    """Print formatted schedule output"""
+  def format_schedule(self):
+    """Format schedule output as a string"""
     schedule = self.get_todays_schedule()
     sim_now = self.get_simulation_datetime()
     
-    print("\n" + "="*80)
-    print("IRRIGATION SCHEDULE SIMULATION")
-    print("="*80)
+    lines = []
+    lines.append("")
+    lines.append("="*80)
+    lines.append("Irrigation Schedule")
+    lines.append("="*80)
     
     # Show override info if any
     if any([self.override_date, self.override_time, self.override_uv, 
             self.override_season, self.override_should_disable is not None]):
-      print("\nSIMULATION OVERRIDES:")
+      lines.append("")
+      lines.append("Simulation Overrides:")
       if self.override_date:
-        print(f"  Date:     {self.override_date}")
+        lines.append(f"  Date:     {self.override_date}")
       if self.override_time:
-        print(f"  Time:     {self.override_time}")
+        lines.append(f"  Time:     {self.override_time}")
       if self.override_uv is not None:
-        print(f"  UV Index: {self.override_uv}")
+        lines.append(f"  UV Index: {self.override_uv}")
       if self.override_season:
-        print(f"  Season:   {self.override_season}")
+        lines.append(f"  Season:   {self.override_season}")
       if self.override_should_disable is not None:
-        print(f"  Weather sensor disables: {'Yes' if self.override_should_disable else 'No'}")
-      print()
+        lines.append(f"  Weather sensor disables: {'Yes' if self.override_should_disable else 'No'}")
+      lines.append("")
     
     if not schedule:
-      print("\nNo irrigation jobs scheduled for this period.")
+      lines.append("")
+      lines.append("No irrigation jobs scheduled for this period.")
       if self.simulate_days > 1:
         if self.simulate_days == 7 and not self.override_date:
           base_date = self.get_week_start_date()
           end_date = base_date + timedelta(days=6)
-          print(f"Period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+          lines.append(f"Period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
         else:
           base_date = self.get_simulation_datetime()
           end_date = base_date + timedelta(days=self.simulate_days - 1)
-          print(f"Period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+          lines.append(f"Period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
       else:
-        print(f"Simulation date/time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"Simulation date/time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
       
       # Show why there are no jobs
       lat, lon = self.irrigate.cfg.getLatLon()
       season = self.get_simulation_season(lat)
       day = calendar.day_abbr[sim_now.weekday()]
-      print(f"Day of week: {day}")
-      print(f"Season: {season}")
+      lines.append(f"Day of week: {day}")
+      lines.append(f"Season: {season}")
     else:
-      print(f"\nMax concurrent valves: {self.irrigate.cfg.valvesConcurrency}")
-      print(f"Timezone: {self.irrigate.cfg.timezone}")
+      lines.append("")
+      lines.append(f"Max concurrent valves: {self.irrigate.cfg.valvesConcurrency}")
+      lines.append(f"Timezone: {self.irrigate.cfg.timezone}")
       
       if self.simulate_days > 1:
         if self.simulate_days == 7 and not self.override_date:
           base_date = self.get_week_start_date()
           end_date = base_date + timedelta(days=6)
-          print(f"Simulation period: {base_date.strftime('%a %b %d')} to {end_date.strftime('%a %b %d, %Y')}")
+          lines.append(f"Simulation period: {base_date.strftime('%a %b %d')} to {end_date.strftime('%a %b %d, %Y')}")
         else:
           base_date = self.get_simulation_datetime()
           end_date = base_date + timedelta(days=self.simulate_days - 1)
-          print(f"Simulation period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+          lines.append(f"Simulation period: {base_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
       else:
-        print(f"Simulation time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"Simulation time: {sim_now.strftime('%Y-%m-%d %H:%M:%S')}")
       
-      print("\n" + "-"*80)
+      lines.append("")
+      lines.append("-"*80)
       
       # Group jobs by date
       jobs_by_date = {}
@@ -334,9 +340,9 @@ class ScheduleSimulator:
         # Date header for multi-day
         if self.simulate_days > 1:
           date_obj = datetime.combine(sim_date, datetime.min.time())
-          print("-"*80)
-          print(f"{calendar.day_abbr[date_obj.weekday()]}, {date_obj.strftime('%B %d, %Y')}")
-          print("-"*80)
+          lines.append("-"*80)
+          lines.append(f"{calendar.day_abbr[date_obj.weekday()]}, {date_obj.strftime('%B %d, %Y')}")
+          lines.append("-"*80)
         
         for job in jobs:
           sched = job['schedule']
@@ -375,21 +381,29 @@ class ScheduleSimulator:
           # Add UV adjustment flag
           uv_str = ", UV Adjusted" if sched.enable_uv_adjustments else ""
           
-          print(f"\nJob #{job_counter}: {job['valve_name']}")
-          print(f"  Scheduled:    {timing_str}{days_str}{seasons_str}{uv_str}")
-          print(f"  Actual Start: {job['actual_start'].strftime('%H:%M:%S')}", end="")
+          lines.append("")
+          lines.append(f"Job #{job_counter}: {job['valve_name']}")
+          lines.append(f"  Scheduled:    {timing_str}{days_str}{seasons_str}{uv_str}")
           if job['queue_delay_minutes'] > 0:
-            print(f" (delayed {job['queue_delay_minutes']:.0f} min)")
+            lines.append(f"  Actual Start: {job['actual_start'].strftime('%H:%M:%S')} (delayed {job['queue_delay_minutes']:.0f} min)")
           else:
-            print()
-          print(f"  Actual End:   {job['actual_end'].strftime('%H:%M:%S')}")
+            lines.append(f"  Actual Start: {job['actual_start'].strftime('%H:%M:%S')}")
+          lines.append(f"  Actual End:   {job['actual_end'].strftime('%H:%M:%S')}")
           
           # Duration: show base duration, and if UV adjusted, show the adjusted value in parentheses
           if job['base_duration'] != job['duration_minutes']:
-            print(f"  Duration:     {job['base_duration']:.0f} minutes ({job['duration_minutes']:.0f} minutes with UV adjustment)")
+            lines.append(f"  Duration:     {job['base_duration']:.0f} minutes ({job['duration_minutes']:.0f} minutes with UV adjustment)")
           else:
-            print(f"  Duration:     {job['duration_minutes']:.0f} minutes")
+            lines.append(f"  Duration:     {job['duration_minutes']:.0f} minutes")
           
           job_counter += 1
     
-    print("\n" + "="*80 + "\n")
+    lines.append("")
+    lines.append("="*80)
+    lines.append("")
+    
+    return "\n".join(lines)
+  
+  def print_schedule(self):
+    """Print formatted schedule output"""
+    print(self.format_schedule())
