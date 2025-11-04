@@ -59,6 +59,7 @@ header {
     justify-content: space-between;
     align-items: center;
     gap: 2rem;
+    flex-wrap: nowrap;
 }
 
 .header-left {
@@ -77,12 +78,14 @@ header {
 .header-icon {
     font-size: 2.5rem;
     line-height: 1;
+    flex-shrink: 0;
 }
 
 .header-title-text {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    min-width: 0;
 }
 
 header h1 {
@@ -90,6 +93,9 @@ header h1 {
     font-weight: 600;
     line-height: 1.2;
     margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .header-subtitle {
@@ -98,6 +104,9 @@ header h1 {
     gap: 0.5rem;
     font-size: 0.85rem;
     opacity: 0.9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .separator {
@@ -117,12 +126,14 @@ header h1 {
     align-items: center;
     gap: 1.5rem;
     flex-shrink: 0;
+    white-space: nowrap; /* Prevent right section from wrapping */
 }
 
-.header-time-section {
+.header-info-section {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
+    justify-content: center;
     gap: 0.25rem;
     background: rgba(255,255,255,0.1);
     padding: 0.5rem 1rem;
@@ -130,18 +141,11 @@ header h1 {
     backdrop-filter: blur(10px);
 }
 
-.time-display {
-    font-size: 1.5rem;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    line-height: 1;
-}
-
-.sun-times {
-    display: flex;
-    gap: 1rem;
+.sun-time-line {
     font-size: 0.85rem;
     opacity: 0.9;
+    line-height: 1.4;
+    white-space: nowrap;
 }
 
 .sun-time {
@@ -200,6 +204,7 @@ header h1 {
     font-weight: 500;
     color: var(--gray-600);
     border-bottom: 3px solid transparent;
+    white-space: nowrap;
 }
 
 .tab.active {
@@ -682,6 +687,49 @@ main {
     margin-bottom: 0;
 }
 
+.config-section.collapsible {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.config-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 1.5rem;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s;
+    border-bottom: 1px solid var(--gray-200);
+}
+
+.config-section-header:hover {
+    background-color: var(--gray-50);
+}
+
+.config-section-header h3 {
+    margin: 0;
+    padding: 0;
+    border: none;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--gray-900);
+}
+
+.collapse-icon {
+    font-size: 0.875rem;
+    color: var(--gray-500);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+    margin-left: 1rem;
+}
+
+.config-section-content {
+    padding: 1.5rem;
+}
+
 .config-section h3 {
     font-size: 1.25rem;
     margin-bottom: 1rem;
@@ -738,10 +786,7 @@ main {
 /* ==================== SIMULATE FORM ==================== */
 
 .simulate-form {
-    background: white;
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    padding: 2rem;
+    padding: 0;
 }
 
 .simulate-form h2 {
@@ -961,7 +1006,7 @@ main {
 
 /* ==================== RESPONSIVE ==================== */
 
-@media (max-width: 550px) {
+@media (max-width: 500px) {
     header {
         padding: 1rem;
     }
@@ -971,44 +1016,32 @@ main {
     }
     
     header h1 {
-        font-size: 1.4rem;
+        font-size: 1.2rem;
     }
 
     .header-content {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 1rem;
-    }
-    
-    .header-left {
-        align-items: flex-start;
+        gap: 0.75rem;
+        /* Keep flex-direction: row to prevent wrapping */
     }
     
     .header-subtitle {
-        font-size: 0.8rem;
+        font-size: 0.9rem;
+        gap: 0.3rem;
     }
     
-    .header-right {
-        flex-direction: row;
-        justify-content: space-between;
-        gap: 1rem;
+    .header-info-section {
+        padding: 0.4rem 0.6rem;
+        gap: 0.2rem;
     }
     
-    .header-time-section {
-        align-items: flex-start;
-        flex: 1;
-    }
-    
-    .time-display {
-        font-size: 1.3rem;
-    }
-    
-    .sun-times {
-        font-size: 0.8rem;
+    .sun-time-line {
+        font-size: 0.7rem;
+        line-height: 1.2;
     }
     
     .system-status {
-        font-size: 0.85rem;
+        font-size: 0.75rem;
+        padding: 0.4rem 0.6rem;
     }
 
     .tabs {
@@ -1172,6 +1205,36 @@ main {
 .schedule-form input[type="checkbox"] {
     width: auto;
     margin-right: 0.5rem;
+}
+
+.schedule-form .checkbox-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: var(--gray-50);
+    border-radius: 4px;
+    border: 1px solid var(--gray-200);
+}
+
+.schedule-form .checkbox-label {
+    display: flex;
+    align-items: center;
+    font-weight: normal;
+    margin: 0;
+    cursor: pointer;
+    padding: 0.25rem;
+    transition: background-color 0.2s;
+    border-radius: 4px;
+}
+
+.schedule-form .checkbox-label:hover {
+    background-color: var(--gray-100);
+}
+
+.schedule-form .checkbox-label input[type="checkbox"] {
+    margin-right: 0.5rem;
+    cursor: pointer;
 }
 
 .schedule-form small {

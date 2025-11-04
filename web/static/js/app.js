@@ -23,11 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Refresh next runs every 2 minutes
     nextRunsInterval = setInterval(loadNextRuns, 120000);
     
-    // Setup simulate form
-    const simForm = document.getElementById('simulate-form');
-    if (simForm) {
-        simForm.addEventListener('submit', handleSimulate);
-    }
+    // Setup simulate form handler (now in config tab)
+    setupSimulateForm();
 });
 
 // ==================== TAB SWITCHING ====================
@@ -329,9 +326,9 @@ function renderValves(valves, queueData = null) {
                     ` : ''}
                     
                     <div class="valve-info-row">
-                        <span class="valve-info-label">Today:</span>
+                        <span class="valve-info-label">Daily Total:</span>
                         <span class="valve-info-value">
-                            ${formatTime(valve.seconds_daily)}
+                            💧${formatTime(valve.seconds_daily)}
                             ${valve.liters_daily > 0 ? ` / ${valve.liters_daily.toFixed(1)}L` : ''}
                         </span>
                     </div>
@@ -353,9 +350,8 @@ function renderValves(valves, queueData = null) {
                 
                 <div class="valve-actions">
                     <button class="btn btn-success btn-small" 
-                            onclick="startValveManual('${valve.name}')"
-                            ${valve.is_open ? 'disabled' : ''}>
-                        ▶️ Start
+                            onclick="startValveManual('${valve.name}')">
+                        🔓 Open
                     </button>
                     
                     <button class="btn btn-secondary btn-small" 
@@ -364,9 +360,8 @@ function renderValves(valves, queueData = null) {
                     </button>
                     
                     <button class="btn btn-danger btn-small" 
-                            onclick="stopValve('${valve.name}')"
-                            ${!valve.is_open ? 'disabled' : ''}>
-                        ⏹️ Stop
+                            onclick="stopValve('${valve.name}')">
+                        🔒 Close
                     </button>
                     
                     ${valve.enabled ? `
@@ -569,8 +564,7 @@ function updateValves(valves, queueData = null) {
         const suspendBtn = card.querySelector('button[onclick*="suspendValve"]');
         const resumeBtn = card.querySelector('button[onclick*="resumeValve"]');
         
-        if (startBtn) startBtn.disabled = valve.is_open;
-        if (stopBtn) stopBtn.disabled = !valve.is_open;
+        // Open and Close buttons are always enabled since valve state may not be accurate
         
         // Handle enable/disable button toggle
         if (valve.enabled && enableBtn) {
@@ -990,66 +984,145 @@ function renderConfig(config, valves) {
     if (loading) loading.remove();
     
     view.innerHTML = `
-        <div class="config-section">
-            <h3>System Configuration</h3>
-            <div class="config-grid">
-                <div class="config-item">
-                    <div class="config-label">Timezone</div>
-                    <div class="config-value">${config.timezone}</div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">Location</div>
-                    <div class="config-value">${config.location.latitude.toFixed(4)}, ${config.location.longitude.toFixed(4)}</div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">Max Concurrent Valves</div>
-                    <div class="config-value">${config.max_concurrent_valves}</div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">Telemetry</div>
-                    <div class="config-value">${config.telemetry_enabled ? '✅ Enabled' : '🚫 Disabled'}</div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">MQTT</div>
-                    <div class="config-value">${config.mqtt_enabled ? '✅ Enabled' : '🚫 Disabled'}</div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">Valves</div>
-                    <div class="config-value">${config.valve_count}</div>
-                </div>
-                <div class="config-item">
-                    <div class="config-label">Sensors</div>
-                    <div class="config-value">${config.sensor_count}</div>
+        <div class="config-section collapsible">
+            <div class="config-section-header" onclick="toggleConfigSection('schedules')">
+                <h3>Schedules</h3>
+                <span class="collapse-icon">▶</span>
+            </div>
+            <div class="config-section-content" id="schedules" style="display: none;">
+                <div id="schedules-container">
+                    ${valves ? renderValveSchedules(valves) : '<p>Loading schedules...</p>'}
                 </div>
             </div>
         </div>
-        
+
+        <div class="config-section collapsible">
+            <div class="config-section-header" onclick="toggleConfigSection('simulate')">
+                <h3>Schedule Simulator</h3>
+                <span class="collapse-icon">▶</span>
+            </div>
+            <div class="config-section-content" id="simulate" style="display: none;">
+                <div class="simulate-form">
+                    <p>Test irrigation schedules with different conditions</p>
+                    
+                    <form id="simulate-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="sim-date">Date (YYYY-MM-DD or MM-DD)</label>
+                                <input type="text" id="sim-date" placeholder="11-05">
+                            </div>
+                            <div class="form-group">
+                                <label for="sim-time">Time (HH:MM)</label>
+                                <input type="text" id="sim-time" placeholder="06:00">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="sim-uv">UV Index (0-15)</label>
+                                <input type="number" id="sim-uv" min="0" max="15" step="0.1" placeholder="5.0">
+                            </div>
+                            <div class="form-group">
+                                <label for="sim-season">Season</label>
+                                <select id="sim-season">
+                                    <option value="">Current Season</option>
+                                    <option value="Spring">Spring</option>
+                                    <option value="Summer">Summer</option>
+                                    <option value="Fall">Fall</option>
+                                    <option value="Winter">Winter</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="sim-rain">Rain (disables irrigation)</label>
+                                <select id="sim-rain">
+                                    <option value="">Normal</option>
+                                    <option value="true">Yes (disable)</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="sim-days">Days to Simulate</label>
+                                <input type="number" id="sim-days" min="1" max="30" value="1">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary">Run Simulation</button>
+                    </form>
+
+                    <div id="simulate-output" class="simulate-output" style="display: none;">
+                        <h3>Simulation Results</h3>
+                        <pre id="simulate-results"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         ${config.uv_adjustments && config.uv_adjustments.length > 0 ? `
-            <div class="config-section">
-                <h3>UV Index Adjustments</h3>
-                <table class="config-table">
-                    <thead>
-                        <tr>
-                            <th>Max UV Index</th>
-                            <th>Multiplier</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${config.uv_adjustments.map(adj => `
+            <div class="config-section collapsible">
+                <div class="config-section-header" onclick="toggleConfigSection('uv-adjustments')">
+                    <h3>UV Index Adjustments</h3>
+                    <span class="collapse-icon">▶</span>
+                </div>
+                <div class="config-section-content" id="uv-adjustments" style="display: none;">
+                    <table class="config-table">
+                        <thead>
                             <tr>
-                                <td>≤ ${adj.max_uv_index}</td>
-                                <td>${adj.multiplier}x</td>
+                                <th>Max UV Index</th>
+                                <th>Multiplier</th>
                             </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            ${config.uv_adjustments.map(adj => `
+                                <tr>
+                                    <td>≤ ${adj.max_uv_index}</td>
+                                    <td>${adj.multiplier}x</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         ` : ''}
         
-        <div class="config-section">
-            <h3>Schedules</h3>
-            <div id="schedules-container">
-                ${valves ? renderValveSchedules(valves) : '<p>Loading schedules...</p>'}
+        <div class="config-section collapsible">
+            <div class="config-section-header" onclick="toggleConfigSection('system-config')">
+                <h3>System Configuration</h3>
+                <span class="collapse-icon">▶</span>
+            </div>
+            <div class="config-section-content" id="system-config" style="display: none;">
+                <div class="config-grid">
+                    <div class="config-item">
+                        <div class="config-label">Timezone</div>
+                        <div class="config-value">${config.timezone}</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">Location</div>
+                        <div class="config-value">${config.location.latitude.toFixed(4)}, ${config.location.longitude.toFixed(4)}</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">Max Concurrent Valves</div>
+                        <div class="config-value">${config.max_concurrent_valves}</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">Telemetry</div>
+                        <div class="config-value">${config.telemetry_enabled ? '✅ Enabled' : '🚫 Disabled'}</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">MQTT</div>
+                        <div class="config-value">${config.mqtt_enabled ? '✅ Enabled' : '🚫 Disabled'}</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">Valves</div>
+                        <div class="config-value">${config.valve_count}</div>
+                    </div>
+                    <div class="config-item">
+                        <div class="config-label">Sensors</div>
+                        <div class="config-value">${config.sensor_count}</div>
+                    </div>
+                </div>
             </div>
         </div>
     `;
@@ -1060,6 +1133,9 @@ function renderConfig(config, valves) {
             loadValveSchedules(valve.name);
         });
     }
+    
+    // Setup simulate form handler
+    setupSimulateForm();
 }
 
 function renderValveSchedules(valves) {
@@ -1202,21 +1278,65 @@ function renderScheduleEditor(sched, valveName, idx) {
             </div>
             
             <div class="form-group">
-                <label>Days (comma-separated, e.g., Mon,Wed,Fri):</label>
-                <input type="text" id="days-${valveName}-${idx}" class="form-control" 
-                       value="${sched.days && sched.days.length > 0 ? sched.days.join(',') : ''}"
-                       placeholder="Leave empty for every day">
+                <label>Days of Week:</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="day-checkbox" value="Sun" ${sched.days && sched.days.includes('Sun') ? 'checked' : ''}>
+                        Sunday
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="day-checkbox" value="Mon" ${sched.days && sched.days.includes('Mon') ? 'checked' : ''}>
+                        Monday
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="day-checkbox" value="Tue" ${sched.days && sched.days.includes('Tue') ? 'checked' : ''}>
+                        Tuesday
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="day-checkbox" value="Wed" ${sched.days && sched.days.includes('Wed') ? 'checked' : ''}>
+                        Wednesday
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="day-checkbox" value="Thu" ${sched.days && sched.days.includes('Thu') ? 'checked' : ''}>
+                        Thursday
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="day-checkbox" value="Fri" ${sched.days && sched.days.includes('Fri') ? 'checked' : ''}>
+                        Friday
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="day-checkbox" value="Sat" ${sched.days && sched.days.includes('Sat') ? 'checked' : ''}>
+                        Saturday
+                    </label>
+                </div>
+                <small>Leave all unchecked for every day</small>
             </div>
             
             <div class="form-group">
-                <label>Seasons (comma-separated, e.g., Spring,Summer):</label>
-                <input type="text" id="seasons-${valveName}-${idx}" class="form-control" 
-                       value="${sched.seasons && sched.seasons.length > 0 ? sched.seasons.join(',') : ''}"
-                       placeholder="Leave empty for all seasons">
+                <label>Seasons:</label>
+                <div class="checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="season-checkbox" value="Spring" ${sched.seasons && sched.seasons.includes('Spring') ? 'checked' : ''}>
+                        Spring
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="season-checkbox" value="Summer" ${sched.seasons && sched.seasons.includes('Summer') ? 'checked' : ''}>
+                        Summer
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="season-checkbox" value="Fall" ${sched.seasons && sched.seasons.includes('Fall') ? 'checked' : ''}>
+                        Fall
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" class="season-checkbox" value="Winter" ${sched.seasons && sched.seasons.includes('Winter') ? 'checked' : ''}>
+                        Winter
+                    </label>
+                </div>
+                <small>Leave all unchecked for all seasons</small>
             </div>
             
             <div class="form-group">
-                <label>
+                <label class="checkbox-label">
                     <input type="checkbox" id="enable_uv_adjustments-${valveName}-${idx}" 
                            ${sched.enable_uv_adjustments ? 'checked' : ''}>
                     Enable UV Adjustments
@@ -1315,29 +1435,24 @@ async function saveSchedule(event, valveName, idx) {
     try {
         const timeBasedOn = document.getElementById(`time_based_on-${valveName}-${idx}`).value;
         const duration = parseInt(document.getElementById(`duration-${valveName}-${idx}`).value);
-        const daysStr = document.getElementById(`days-${valveName}-${idx}`).value.trim();
-        const seasonsStr = document.getElementById(`seasons-${valveName}-${idx}`).value.trim();
         const enableUv = document.getElementById(`enable_uv_adjustments-${valveName}-${idx}`).checked;
+        
+        // Collect selected days from checkboxes
+        const scheduleForm = event.target;
+        const dayCheckboxes = scheduleForm.querySelectorAll('.day-checkbox:checked');
+        const selectedDays = Array.from(dayCheckboxes).map(cb => cb.value);
+        
+        // Collect selected seasons from checkboxes
+        const seasonCheckboxes = scheduleForm.querySelectorAll('.season-checkbox:checked');
+        const selectedSeasons = Array.from(seasonCheckboxes).map(cb => cb.value);
         
         const scheduleData = {
             time_based_on: timeBasedOn,
             duration: duration,
-            enable_uv_adjustments: enableUv
+            enable_uv_adjustments: enableUv,
+            days: selectedDays,
+            seasons: selectedSeasons
         };
-        
-        // Add days if specified
-        if (daysStr) {
-            scheduleData.days = daysStr.split(',').map(d => d.trim()).filter(d => d);
-        } else {
-            scheduleData.days = [];
-        }
-        
-        // Add seasons if specified
-        if (seasonsStr) {
-            scheduleData.seasons = seasonsStr.split(',').map(s => s.trim()).filter(s => s);
-        } else {
-            scheduleData.seasons = [];
-        }
         
         // Add time-specific fields
         if (timeBasedOn === 'fixed') {
@@ -1395,6 +1510,30 @@ async function deleteSchedule(valveName, idx) {
 }
 
 // ==================== SIMULATION ====================
+
+function setupSimulateForm() {
+    const simForm = document.getElementById('simulate-form');
+    if (simForm) {
+        // Remove existing listener if any
+        simForm.removeEventListener('submit', handleSimulate);
+        // Add new listener
+        simForm.addEventListener('submit', handleSimulate);
+    }
+}
+
+function toggleConfigSection(sectionId) {
+    const content = document.getElementById(sectionId);
+    const header = content.previousElementSibling;
+    const icon = header.querySelector('.collapse-icon');
+    
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.textContent = '▼';
+    } else {
+        content.style.display = 'none';
+        icon.textContent = '▶';
+    }
+}
 
 async function handleSimulate(e) {
     e.preventDefault();

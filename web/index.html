@@ -19,19 +19,22 @@
                         <div class="header-title-text">
                             <h1>Irrigate Control</h1>
                             <div class="header-subtitle">
+                                <span id="current-season" class="season-text">--</span>
+                                <span class="separator">•</span>
                                 <span id="current-date" class="date-text">Loading...</span>
                                 <span class="separator">•</span>
-                                <span id="current-season" class="season-text">--</span>
+                                <span id="current-time" class="time-text">--:--</span>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="header-right">
-                    <div class="header-time-section">
-                        <div id="current-time" class="time-display">--:--</div>
-                        <div class="sun-times">
-                            <span class="sun-time">🌄 <span id="sunrise-time">--:--</span></span>
-                            <span class="sun-time">🌅 <span id="sunset-time">--:--</span></span>
+                    <div class="header-info-section">
+                        <div class="sun-time-line">
+                            ☀️ <span id="sunrise-time">--:--</span>
+                        </div>
+                        <div class="sun-time-line">
+                            🌙 <span id="sunset-time">--:--</span>
                         </div>
                     </div>
                     <div id="system-status" class="system-status">
@@ -45,7 +48,7 @@
         <!-- Tabs Navigation -->
         <nav class="tabs">
             <button class="tab active" data-tab="valves" onclick="switchTab('valves')">
-                💧 Valves
+                🚰 Valves
             </button>
             <button class="tab" data-tab="queue" onclick="switchTab('queue')">
                 📋 Queue
@@ -55,9 +58,6 @@
             </button>
             <button class="tab" data-tab="config" onclick="switchTab('config')">
                 ⚙️ Config
-            </button>
-            <button class="tab" data-tab="simulate" onclick="switchTab('simulate')">
-                🧪 Simulate
             </button>
         </nav>
 
@@ -85,66 +85,6 @@
             <div id="tab-config" class="tab-content">
                 <div class="loading">Loading configuration...</div>
                 <div id="config-view" class="config-view"></div>
-            </div>
-
-            <!-- Simulate Tab -->
-            <div id="tab-simulate" class="tab-content">
-                <div class="simulate-form">
-                    <h2>Schedule Simulator</h2>
-                    <p>Test irrigation schedules with different conditions</p>
-                    
-                    <form id="simulate-form">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="sim-date">Date (YYYY-MM-DD or MM-DD)</label>
-                                <input type="text" id="sim-date" placeholder="11-05">
-                            </div>
-                            <div class="form-group">
-                                <label for="sim-time">Time (HH:MM)</label>
-                                <input type="text" id="sim-time" placeholder="06:00">
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="sim-uv">UV Index (0-15)</label>
-                                <input type="number" id="sim-uv" min="0" max="15" step="0.1" placeholder="5.0">
-                            </div>
-                            <div class="form-group">
-                                <label for="sim-season">Season</label>
-                                <select id="sim-season">
-                                    <option value="">Current Season</option>
-                                    <option value="Spring">Spring</option>
-                                    <option value="Summer">Summer</option>
-                                    <option value="Fall">Fall</option>
-                                    <option value="Winter">Winter</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="sim-rain">Rain (disables irrigation)</label>
-                                <select id="sim-rain">
-                                    <option value="">Normal</option>
-                                    <option value="true">Yes (disable)</option>
-                                    <option value="false">No</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="sim-days">Days to Simulate</label>
-                                <input type="number" id="sim-days" min="1" max="30" value="1">
-                            </div>
-                        </div>
-
-                        <button type="submit" class="btn btn-primary">Run Simulation</button>
-                    </form>
-
-                    <div id="simulate-output" class="simulate-output" style="display: none;">
-                        <h3>Simulation Results</h3>
-                        <pre id="simulate-results"></pre>
-                    </div>
-                </div>
             </div>
         </main>
 
