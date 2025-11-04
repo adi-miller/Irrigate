@@ -53,26 +53,107 @@ header {
 }
 
 .header-content {
-    max-width: 1200px;
+    max-width: 1400px;
     margin: 0 auto;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 1rem;
+    gap: 2rem;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.header-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.header-icon {
+    font-size: 2.5rem;
+    line-height: 1;
+}
+
+.header-title-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
 }
 
 header h1 {
     font-size: 1.75rem;
     font-weight: 600;
+    line-height: 1.2;
+    margin: 0;
 }
 
-.system-status {
+.header-subtitle {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.95rem;
-    background: rgba(255,255,255,0.15);
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.separator {
+    opacity: 0.6;
+}
+
+.date-text {
+    font-weight: 400;
+}
+
+.season-text {
+    font-weight: 500;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-shrink: 0;
+}
+
+.header-time-section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+    background: rgba(255,255,255,0.1);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    backdrop-filter: blur(10px);
+}
+
+.time-display {
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    line-height: 1;
+}
+
+.sun-times {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.sun-time {
+    white-space: nowrap;
+}
+
+.system-status {
+    display: none; /* Hidden by default, shown only when status is not OK */
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    background: rgba(255,255,255,0.1);
     padding: 0.5rem 1rem;
     border-radius: var(--radius);
     backdrop-filter: blur(10px);
@@ -308,8 +389,8 @@ main {
 }
 
 .valve-actions {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-top: 1rem;
 }
@@ -317,10 +398,15 @@ main {
 .valve-actions button {
     padding: 0.5rem;
     font-size: 0.85rem;
+    flex: 1 1 calc(33.333% - 0.34rem);
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .valve-actions button:nth-child(6) {
-    grid-column: span 3;
+    flex: 1 1 100%;
 }
 
 /* ==================== BUTTONS ==================== */
@@ -875,14 +961,54 @@ main {
 
 /* ==================== RESPONSIVE ==================== */
 
-@media (max-width: 768px) {
+@media (max-width: 550px) {
+    header {
+        padding: 1rem;
+    }
+    
+    .header-icon {
+        font-size: 2rem;
+    }
+    
     header h1 {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
     }
 
     .header-content {
         flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+    }
+    
+    .header-left {
         align-items: flex-start;
+    }
+    
+    .header-subtitle {
+        font-size: 0.8rem;
+    }
+    
+    .header-right {
+        flex-direction: row;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+    
+    .header-time-section {
+        align-items: flex-start;
+        flex: 1;
+    }
+    
+    .time-display {
+        font-size: 1.3rem;
+    }
+    
+    .sun-times {
+        font-size: 0.8rem;
+    }
+    
+    .system-status {
+        font-size: 0.85rem;
     }
 
     .tabs {

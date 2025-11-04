@@ -6,6 +6,7 @@ from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from schedule_simulator import ScheduleSimulator
 from datetime import datetime, timedelta
+from suntime import Sun
 import time
 
 app = FastAPI(title="Irrigate API", version="1.0.0")
@@ -142,12 +143,31 @@ async def get_full_status():
         
         sensors.append(sensor_data)
     
+    # Calculate current time info, season, and sunrise/sunset
+    tz = pytz.timezone(irrigate_instance.cfg.timezone)
+    now = datetime.now(tz)
+    lat, lon = irrigate_instance.cfg.getLatLon()
+    season = irrigate_instance.getSeason(lat, now)
+    
+    # Calculate sunrise and sunset
+    sun = Sun(lat, lon)
+    now_naive = now.replace(tzinfo=None)
+    sunrise = sun.get_sunrise_time(at_date=now_naive, time_zone=tz)
+    sunrise = sunrise.replace(year=now.year, month=now.month, day=now.day)
+    sunset = sun.get_sunset_time(at_date=now_naive, time_zone=tz)
+    sunset = sunset.replace(year=now.year, month=now.month, day=now.day)
+    
     return {
         "system": {
             "status": irrigate_instance._status,
             "temp_status": list(irrigate_instance._tempStatus.keys()),
             "uptime_minutes": int((datetime.now() - irrigate_instance.startTime).total_seconds() / 60),
-            "started_at": irrigate_instance.startTime.isoformat()
+            "started_at": irrigate_instance.startTime.isoformat(),
+            "current_time": now.isoformat(),
+            "season": season,
+            "sunrise": sunrise.isoformat(),
+            "sunset": sunset.isoformat(),
+            "timezone": irrigate_instance.cfg.timezone
         },
         "valves": valves,
         "sensors": sensors,

@@ -156,29 +156,94 @@ async function loadQueue() {
 // ==================== SYSTEM STATUS ====================
 
 function updateSystemStatus(system) {
+    const statusPanel = document.getElementById('system-status');
     const indicator = document.querySelector('.status-indicator');
     const statusText = document.querySelector('.status-text');
-    const uptime = document.querySelector('.uptime');
     
-    if (!indicator || !statusText || !uptime) return;
+    if (!statusPanel || !indicator || !statusText) return;
     
-    // Status indicator
-    indicator.className = 'status-indicator';
+    // Hide panel if status is OK, show otherwise
     if (system.status === 'OK') {
-        indicator.classList.add('ok');
-        statusText.textContent = 'System OK';
-    } else if (system.status.includes('Err')) {
-        indicator.classList.add('error');
-        statusText.textContent = system.status;
+        statusPanel.style.display = 'none';
     } else {
-        indicator.classList.add('warning');
-        statusText.textContent = system.status;
+        statusPanel.style.display = 'flex';
+        
+        // Status indicator
+        indicator.className = 'status-indicator';
+        if (system.status.includes('Err')) {
+            indicator.classList.add('error');
+            statusText.textContent = system.status;
+        } else {
+            indicator.classList.add('warning');
+            statusText.textContent = system.status;
+        }
     }
     
-    // Uptime
-    const hours = Math.floor(system.uptime_minutes / 60);
-    const minutes = system.uptime_minutes % 60;
-    uptime.textContent = `Uptime: ${hours}h ${minutes}m`;
+    // Update datetime information
+    updateDateTimeInfo(system);
+}
+
+function updateDateTimeInfo(system) {
+    if (!system.current_time) return;
+    
+    try {
+        // Parse the ISO datetime
+        const currentTime = new Date(system.current_time);
+        
+        // Update date - shorter format
+        const dateEl = document.getElementById('current-date');
+        if (dateEl) {
+            const options = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' };
+            dateEl.textContent = currentTime.toLocaleDateString('en-US', options);
+        }
+        
+        // Update time
+        const timeEl = document.getElementById('current-time');
+        if (timeEl) {
+            const timeStr = currentTime.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit',
+                hour12: true 
+            });
+            timeEl.textContent = timeStr;
+        }
+        
+        // Update season
+        const seasonEl = document.getElementById('current-season');
+        if (seasonEl && system.season) {
+            const seasonEmoji = {
+                'Spring': '🌸',
+                'Summer': '☀️',
+                'Fall': '🍂',
+                'Winter': '❄️'
+            };
+            seasonEl.textContent = `${seasonEmoji[system.season] || ''} ${system.season}`;
+        }
+        
+        // Update sunrise - shorter format
+        const sunriseEl = document.getElementById('sunrise-time');
+        if (sunriseEl && system.sunrise) {
+            const sunrise = new Date(system.sunrise);
+            sunriseEl.textContent = sunrise.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit',
+                hour12: true 
+            });
+        }
+        
+        // Update sunset - shorter format
+        const sunsetEl = document.getElementById('sunset-time');
+        if (sunsetEl && system.sunset) {
+            const sunset = new Date(system.sunset);
+            sunsetEl.textContent = sunset.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit',
+                hour12: true 
+            });
+        }
+    } catch (error) {
+        console.error('Error updating datetime info:', error);
+    }
 }
 
 // ==================== VALVE RENDERING ====================

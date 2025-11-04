@@ -13,11 +13,31 @@
         <!-- Header -->
         <header>
             <div class="header-content">
-                <h1>🌱 Irrigate Control</h1>
-                <div id="system-status" class="system-status">
-                    <span class="status-indicator">●</span>
-                    <span class="status-text">Loading...</span>
-                    <span class="uptime"></span>
+                <div class="header-left">
+                    <div class="header-title">
+                        <span class="header-icon">🌱</span>
+                        <div class="header-title-text">
+                            <h1>Irrigate Control</h1>
+                            <div class="header-subtitle">
+                                <span id="current-date" class="date-text">Loading...</span>
+                                <span class="separator">•</span>
+                                <span id="current-season" class="season-text">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="header-time-section">
+                        <div id="current-time" class="time-display">--:--</div>
+                        <div class="sun-times">
+                            <span class="sun-time">🌄 <span id="sunrise-time">--:--</span></span>
+                            <span class="sun-time">🌅 <span id="sunset-time">--:--</span></span>
+                        </div>
+                    </div>
+                    <div id="system-status" class="system-status">
+                        <span class="status-indicator">●</span>
+                        <span class="status-text">Loading...</span>
+                    </div>
                 </div>
             </div>
         </header>
