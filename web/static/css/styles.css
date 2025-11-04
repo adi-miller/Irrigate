@@ -118,13 +118,7 @@ header h1 {
     font-size: 1rem;
     font-weight: 500;
     color: var(--gray-600);
-    transition: var(--transition);
     border-bottom: 3px solid transparent;
-}
-
-.tab:hover {
-    background: var(--gray-50);
-    color: var(--gray-900);
 }
 
 .tab.active {
@@ -177,12 +171,6 @@ main {
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     padding: 1.5rem;
-    transition: var(--transition);
-}
-
-.valve-card:hover {
-    box-shadow: var(--shadow-lg);
-    transform: translateY(-2px);
 }
 
 .valve-header {
@@ -198,12 +186,28 @@ main {
     color: var(--gray-900);
 }
 
+.valve-header-right {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5rem;
+    align-items: center;
+}
+
 .valve-status-badge {
     padding: 0.25rem 0.75rem;
     border-radius: 20px;
     font-size: 0.85rem;
     font-weight: 500;
     text-transform: uppercase;
+}
+
+.valve-queue-info {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background: #fff3e0;
+    color: #e65100;
 }
 
 .valve-status-badge.open {
@@ -214,6 +218,11 @@ main {
 .valve-status-badge.closed {
     background: var(--gray-200);
     color: var(--gray-700);
+}
+
+.valve-status-badge.queued {
+    background: #e3f2fd;
+    color: #1565c0;
 }
 
 .valve-status-badge.disabled {
@@ -278,7 +287,7 @@ main {
 
 .valve-actions {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 0.5rem;
     margin-top: 1rem;
 }
@@ -286,6 +295,10 @@ main {
 .valve-actions button {
     padding: 0.5rem;
     font-size: 0.85rem;
+}
+
+.valve-actions button:nth-child(6) {
+    grid-column: span 3;
 }
 
 /* ==================== BUTTONS ==================== */
@@ -297,14 +310,8 @@ main {
     font-size: 1rem;
     font-weight: 500;
     cursor: pointer;
-    transition: var(--transition);
     background: var(--gray-200);
     color: var(--gray-900);
-}
-
-.btn:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--shadow);
 }
 
 .btn:active {
@@ -428,6 +435,128 @@ main {
     color: var(--gray-900);
 }
 
+/* ==================== QUEUE VIEW ==================== */
+
+.queue-view {
+    background: white;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1.5rem;
+}
+
+.queue-empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--gray-500);
+}
+
+.queue-empty .empty-icon {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+}
+
+.queue-empty h3 {
+    font-size: 1.5rem;
+    color: var(--gray-700);
+    margin-bottom: 0.5rem;
+}
+
+.queue-empty p {
+    font-size: 1rem;
+}
+
+.queue-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid var(--gray-200);
+}
+
+.queue-header h2 {
+    margin: 0;
+    color: var(--primary);
+}
+
+.queue-count {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    background: var(--gray-100);
+    border-radius: 20px;
+    color: var(--gray-700);
+}
+
+.queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.queue-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--gray-50);
+    border-radius: var(--radius);
+    border-left: 4px solid var(--primary);
+}
+
+.queue-item-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    background: var(--primary);
+    color: white;
+    border-radius: 50%;
+    font-weight: 600;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.queue-item-details {
+    flex: 1;
+}
+
+.queue-item-valve {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--gray-900);
+    margin-bottom: 0.25rem;
+}
+
+.queue-item-info {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.queue-duration {
+    color: var(--gray-600);
+}
+
+.queue-type {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.queue-type.scheduled {
+    background: #e3f2fd;
+    color: #1565c0;
+}
+
+.queue-type.manual {
+    background: #fff3e0;
+    color: #e65100;
+}
+
 /* ==================== CONFIG VIEW ==================== */
 
 .config-view {
@@ -542,7 +671,6 @@ main {
     border: 1px solid var(--gray-300);
     border-radius: var(--radius);
     font-size: 1rem;
-    transition: var(--transition);
 }
 
 .form-group input:focus,

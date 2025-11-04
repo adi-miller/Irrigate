@@ -32,6 +32,7 @@ async def get_full_status():
             "seconds_daily": v.secondsDaily,
             "liters_daily": v.litersDaily,
             "seconds_remain": v.secondsRemain,
+            "seconds_duration": getattr(v, 'secondsDuration', 0),  # Total job duration
             "seconds_last": v.secondsLast if hasattr(v, 'secondsLast') else 0,
             "liters_last": v.litersLast if hasattr(v, 'litersLast') else 0,
         })
@@ -159,6 +160,40 @@ async def get_sensors():
     return {"sensors": sensors}
 
 
+@app.get("/api/queue")
+async def get_queue():
+    """Get current job queue"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    # Get all items from queue without removing them
+    queue_items = []
+    temp_items = []
+    
+    # Extract items from queue
+    while not irrigate_instance.q.empty():
+        try:
+            job = irrigate_instance.q.get_nowait()
+            temp_items.append(job)
+            queue_items.append({
+                "valve_name": job.valve.name,
+                "duration_minutes": job.duration,
+                "is_scheduled": job.sched is not None,
+                "schedule_index": getattr(job.sched, 'index', None) if job.sched else None
+            })
+        except:
+            break
+    
+    # Put items back in queue
+    for job in temp_items:
+        irrigate_instance.q.put(job)
+    
+    return {
+        "queue_size": len(queue_items),
+        "jobs": queue_items
+    }
+
+
 @app.get("/api/config")
 async def get_config():
     """Get system configuration (read-only)"""
@@ -196,13 +231,12 @@ async def start_valve_manual(valve_name: str, duration_minutes: float = 5):
         raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
     
     valve = irrigate_instance.valves[valve_name]
-    valve.handler.open()
-    irrigate_instance.logger.info(f"Manual start: Valve '{valve_name}' opened for {duration_minutes} minutes")
+    valve.open()
+    irrigate_instance.logger.info(f"Manual start: Valve '{valve_name}' opened manually")
     
     return {
         "success": True,
         "valve": valve_name,
-        "duration_minutes": duration_minutes,
         "action": "opened_manual"
     }
 
@@ -239,7 +273,7 @@ async def stop_valve(valve_name: str):
         raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
     
     valve = irrigate_instance.valves[valve_name]
-    valve.handler.close()
+    valve.close()
     irrigate_instance.logger.info(f"Manual stop: Valve '{valve_name}' closed")
     
     return {

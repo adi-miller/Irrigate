@@ -27,6 +27,9 @@
             <button class="tab active" data-tab="valves" onclick="switchTab('valves')">
                 💧 Valves
             </button>
+            <button class="tab" data-tab="queue" onclick="switchTab('queue')">
+                📋 Queue
+            </button>
             <button class="tab" data-tab="sensors" onclick="switchTab('sensors')">
                 🌡️ Sensors
             </button>
@@ -44,6 +47,12 @@
             <div id="tab-valves" class="tab-content active">
                 <div class="loading">Loading valves...</div>
                 <div id="valves-grid" class="valves-grid"></div>
+            </div>
+
+            <!-- Queue Tab -->
+            <div id="tab-queue" class="tab-content">
+                <div class="loading">Loading queue...</div>
+                <div id="queue-view" class="queue-view"></div>
             </div>
 
             <!-- Sensors Tab -->

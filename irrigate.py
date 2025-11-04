@@ -304,6 +304,7 @@ class Irrigate:
           valve.secondsLast = 0
           valve.litersLast = 0
           valve.secondsRemain = duration.seconds
+          valve.secondsDuration = duration.seconds  # Store original duration for progress calculation
           initialOpen = valve.secondsDaily
           sensorDisabled = False
           openSince = None

@@ -40,7 +40,11 @@ function switchTab(tabName) {
     // Load content based on tab
     switch(tabName) {
         case 'valves':
-            if (statusData) renderValves(statusData.valves);
+            // Reload to get fresh queue data
+            loadStatus();
+            break;
+        case 'queue':
+            loadQueue();
             break;
         case 'sensors':
             if (statusData) renderSensors(statusData.sensors);
@@ -72,7 +76,10 @@ async function apiCall(endpoint, options = {}) {
 
 async function loadStatus() {
     try {
-        const data = await apiCall('/api/status');
+        const [data, queueData] = await Promise.all([
+            apiCall('/api/status'),
+            apiCall('/api/queue')
+        ]);
         statusData = data;
         
         // Update system status
@@ -80,9 +87,11 @@ async function loadStatus() {
         
         // Update current tab content
         if (currentTab === 'valves') {
-            renderValves(data.valves);
+            renderValves(data.valves, queueData);
         } else if (currentTab === 'sensors') {
             renderSensors(data.sensors);
+        } else if (currentTab === 'queue') {
+            renderQueue(queueData);
         }
         
     } catch (error) {
@@ -96,6 +105,15 @@ async function loadConfig() {
         renderConfig(config);
     } catch (error) {
         console.error('Failed to load config:', error);
+    }
+}
+
+async function loadQueue() {
+    try {
+        const queueData = await apiCall('/api/queue');
+        renderQueue(queueData);
+    } catch (error) {
+        console.error('Failed to load queue:', error);
     }
 }
 
@@ -129,7 +147,7 @@ function updateSystemStatus(system) {
 
 // ==================== VALVE RENDERING ====================
 
-function renderValves(valves) {
+function renderValves(valves, queueData = null) {
     const grid = document.getElementById('valves-grid');
     if (!grid) return;
     
@@ -142,21 +160,54 @@ function renderValves(valves) {
         return;
     }
     
+    // Build a map of queued valves with their position
+    const queuedValves = new Map();
+    if (queueData && queueData.jobs) {
+        queueData.jobs.forEach((job, index) => {
+            const position = index + 1; // 1-based position
+            if (!queuedValves.has(job.valve_name)) {
+                queuedValves.set(job.valve_name, []);
+            }
+            queuedValves.get(job.valve_name).push({ ...job, position });
+        });
+    }
+    
     grid.innerHTML = valves.map(valve => {
-        const status = getValveStatus(valve);
+        const queuedJobs = queuedValves.get(valve.name) || [];
+        const isQueued = queuedJobs.length > 0;
+        
+        // Determine display status
+        let displayStatus = getValveStatus(valve);
+        let statusClass = displayStatus.toLowerCase();
+        let queueBadge = '';
+        
+        // If queued, create a separate queue badge
+        if (isQueued) {
+            const nextPosition = queuedJobs[0].position;
+            const queueText = queuedJobs.length > 1 
+                ? `Queued #${nextPosition} (+${queuedJobs.length - 1})`
+                : `Queued #${nextPosition}`;
+            queueBadge = `<span class="valve-status-badge queued">${queueText}</span>`;
+        }
+        
         const timeRemaining = formatTime(valve.seconds_remain);
-        const progress = valve.seconds_last > 0 ? 
-            ((valve.seconds_last - valve.seconds_remain) / valve.seconds_last * 100) : 0;
+        // Progress = remaining time / original job duration
+        // This correctly accounts for suspension since seconds_remain doesn't decrease when suspended
+        const progress = valve.seconds_duration > 0 ? 
+            (valve.seconds_remain / valve.seconds_duration * 100) : 0;
         
         return `
             <div class="valve-card" id="valve-${valve.name}">
                 <div class="valve-header">
                     <h3 class="valve-name">${valve.name}</h3>
-                    <span class="valve-status-badge ${status.toLowerCase()}">${status}</span>
+                    <div class="valve-header-right">
+                        <span class="valve-status-badge ${statusClass}">${displayStatus}</span>
+                        ${queueBadge}
+                    </div>
                 </div>
                 
                 <div class="valve-info">
-                    ${valve.is_open ? `
+                    ${valve.handled ? `
                         <div class="valve-info-row">
                             <span class="valve-info-label">Time Remaining:</span>
                             <span class="valve-info-value">${timeRemaining}</span>
@@ -175,31 +226,25 @@ function renderValves(valves) {
                             ${valve.liters_daily > 0 ? ` / ${valve.liters_daily.toFixed(1)}L` : ''}
                         </span>
                     </div>
-                    
-                    ${valve.seconds_last > 0 ? `
-                        <div class="valve-info-row">
-                            <span class="valve-info-label">Last Run:</span>
-                            <span class="valve-info-value">
-                                ${formatTime(valve.seconds_last)}
-                                ${valve.liters_last > 0 ? ` / ${valve.liters_last.toFixed(1)}L` : ''}
-                            </span>
-                        </div>
-                    ` : ''}
                 </div>
                 
                 <div class="valve-actions">
-                    ${valve.is_open ? `
-                        <button class="btn btn-danger btn-small" onclick="stopValve('${valve.name}')">
-                            ⏹️ Stop
-                        </button>
-                    ` : `
-                        <button class="btn btn-success btn-small" onclick="showStartDialog('${valve.name}')">
-                            ▶️ Start
-                        </button>
-                        <button class="btn btn-secondary btn-small" onclick="showQueueDialog('${valve.name}')">
-                            ⏱️ Queue
-                        </button>
-                    `}
+                    <button class="btn btn-success btn-small" 
+                            onclick="startValveManual('${valve.name}')"
+                            ${valve.is_open ? 'disabled' : ''}>
+                        ▶️ Start
+                    </button>
+                    
+                    <button class="btn btn-secondary btn-small" 
+                            onclick="showQueueDialog('${valve.name}')">
+                        ⏱️ Queue
+                    </button>
+                    
+                    <button class="btn btn-danger btn-small" 
+                            onclick="stopValve('${valve.name}')"
+                            ${!valve.is_open ? 'disabled' : ''}>
+                        ⏹️ Stop
+                    </button>
                     
                     ${valve.enabled ? `
                         <button class="btn btn-warning btn-small" onclick="disableValve('${valve.name}')">
@@ -256,9 +301,9 @@ function formatTime(seconds) {
 
 // ==================== VALVE ACTIONS ====================
 
-async function startValve(name, duration) {
+async function startValveManual(name) {
     try {
-        await apiCall(`/api/valves/${name}/start-manual?duration_minutes=${duration}`, {
+        await apiCall(`/api/valves/${name}/start-manual`, {
             method: 'POST'
         });
         showToast(`Valve ${name} started manually`, 'success');
@@ -327,13 +372,6 @@ async function resumeValve(name) {
         loadStatus();
     } catch (error) {
         console.error('Failed to resume valve:', error);
-    }
-}
-
-function showStartDialog(name) {
-    const duration = prompt(`Start ${name} manually for how many minutes?`, '5');
-    if (duration && !isNaN(duration) && duration > 0) {
-        startValve(name, parseFloat(duration));
     }
 }
 
@@ -434,6 +472,51 @@ function renderSensors(sensors) {
             </div>
         `;
     }).join('');
+}
+
+// ==================== QUEUE RENDERING ====================
+
+function renderQueue(queueData) {
+    const view = document.getElementById('queue-view');
+    if (!view) return;
+    
+    // Remove loading message
+    const loading = view.parentElement.querySelector('.loading');
+    if (loading) loading.remove();
+    
+    if (!queueData.jobs || queueData.jobs.length === 0) {
+        view.innerHTML = `
+            <div class="queue-empty">
+                <div class="empty-icon">📭</div>
+                <h3>Queue is Empty</h3>
+                <p>No valves are currently queued for irrigation</p>
+            </div>
+        `;
+        return;
+    }
+    
+    view.innerHTML = `
+        <div class="queue-header">
+            <h2>Job Queue</h2>
+            <span class="queue-count">${queueData.queue_size} job${queueData.queue_size !== 1 ? 's' : ''} in queue</span>
+        </div>
+        <div class="queue-list">
+            ${queueData.jobs.map((job, index) => `
+                <div class="queue-item">
+                    <div class="queue-item-number">${index + 1}</div>
+                    <div class="queue-item-details">
+                        <div class="queue-item-valve">${job.valve_name}</div>
+                        <div class="queue-item-info">
+                            <span class="queue-duration">⏱️ ${job.duration_minutes} min</span>
+                            <span class="queue-type ${job.is_scheduled ? 'scheduled' : 'manual'}">
+                                ${job.is_scheduled ? '📅 Scheduled' : '👤 Manual'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
 }
 
 // ==================== CONFIG RENDERING ====================
