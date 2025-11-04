@@ -756,6 +756,123 @@ main {
     background: var(--warning);
 }
 
+/* ==================== SCHEDULE PANEL ==================== */
+
+.schedule-panel {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--gray-50);
+    border-radius: var(--radius);
+    border: 1px solid var(--gray-300);
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.schedule-panel-loading,
+.schedule-panel-empty,
+.schedule-panel-error {
+    text-align: center;
+    padding: 1rem;
+    color: var(--gray-600);
+}
+
+.schedule-panel-error {
+    color: var(--danger);
+}
+
+.schedule-item {
+    background: white;
+    border-radius: var(--radius);
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--gray-300);
+}
+
+.schedule-item:last-child {
+    margin-bottom: 0;
+}
+
+.schedule-item-header {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.schedule-number {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 0.95rem;
+}
+
+.schedule-uv-pill {
+    background: #fff3e0;
+    color: #e65100;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.schedule-item-details {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.schedule-when {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--gray-900);
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--gray-300);
+    margin-bottom: 0.25rem;
+}
+
+.schedule-days {
+    color: var(--gray-900);
+}
+
+.schedule-seasons {
+    color: var(--gray-600);
+    font-weight: 500;
+}
+
+.schedule-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.schedule-detail-label {
+    color: var(--gray-600);
+    font-weight: 500;
+    min-width: 80px;
+}
+
+.schedule-detail-value {
+    color: var(--gray-900);
+    font-weight: 600;
+    text-align: right;
+}
+
 /* ==================== RESPONSIVE ==================== */
 
 @media (max-width: 768px) {

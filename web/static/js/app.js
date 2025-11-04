@@ -94,7 +94,15 @@ async function loadStatus() {
         
         // Update current tab content
         if (currentTab === 'valves') {
-            renderValves(data.valves, queueData);
+            // Check if valves grid exists and has content
+            const grid = document.getElementById('valves-grid');
+            if (grid && grid.children.length > 0) {
+                // Update existing valve cards without re-rendering
+                updateValves(data.valves, queueData);
+            } else {
+                // Initial render
+                renderValves(data.valves, queueData);
+            }
         } else if (currentTab === 'sensors') {
             renderSensors(data.sensors);
         } else if (currentTab === 'queue') {
@@ -112,10 +120,15 @@ async function loadNextRuns() {
         nextRunsData = data.next_runs;
         lastNextRunsUpdate = Date.now();
         
-        // Re-render valves if we're on the valves tab to show updated next run info
+        // Update valves if we're on the valves tab to show updated next run info
         if (currentTab === 'valves' && statusData) {
             const queueData = await apiCall('/api/queue');
-            renderValves(statusData.valves, queueData);
+            const grid = document.getElementById('valves-grid');
+            if (grid && grid.children.length > 0) {
+                updateValves(statusData.valves, queueData);
+            } else {
+                renderValves(statusData.valves, queueData);
+            }
         }
     } catch (error) {
         console.error('Failed to load next runs:', error);
@@ -307,13 +320,203 @@ function renderValves(valves, queueData = null) {
                         </button>
                     `}
                     
-                    <button class="btn btn-small" onclick="showValveDetails('${valve.name}')">
-                        ℹ️ Details
+                    <button class="btn btn-small" onclick="toggleSchedulePanel('${valve.name}')">
+                        📅 Schedules
                     </button>
+                </div>
+                
+                <div id="schedule-panel-${valve.name}" class="schedule-panel" style="display: none;">
+                    <div class="schedule-panel-loading">Loading schedules...</div>
                 </div>
             </div>
         `;
     }).join('');
+}
+
+function updateValves(valves, queueData = null) {
+    if (!valves || valves.length === 0) return;
+    
+    // Build a map of queued valves with their position
+    const queuedValves = new Map();
+    if (queueData && queueData.jobs) {
+        queueData.jobs.forEach((job, index) => {
+            const position = index + 1;
+            if (!queuedValves.has(job.valve_name)) {
+                queuedValves.set(job.valve_name, []);
+            }
+            queuedValves.get(job.valve_name).push({ ...job, position });
+        });
+    }
+    
+    valves.forEach(valve => {
+        const card = document.getElementById(`valve-${valve.name}`);
+        if (!card) return; // Card doesn't exist, might need full render
+        
+        const queuedJobs = queuedValves.get(valve.name) || [];
+        const isQueued = queuedJobs.length > 0;
+        
+        // Update status badge
+        const displayStatus = getValveStatus(valve);
+        const statusBadge = card.querySelector('.valve-status-badge:not(.queued)');
+        if (statusBadge) {
+            statusBadge.className = `valve-status-badge ${displayStatus.toLowerCase()}`;
+            statusBadge.textContent = displayStatus;
+        }
+        
+        // Update queue badge
+        const headerRight = card.querySelector('.valve-header-right');
+        let queueBadge = card.querySelector('.valve-status-badge.queued');
+        
+        if (isQueued) {
+            const nextPosition = queuedJobs[0].position;
+            const queueText = queuedJobs.length > 1 
+                ? `Queued #${nextPosition} (+${queuedJobs.length - 1})`
+                : `Queued #${nextPosition}`;
+            
+            if (queueBadge) {
+                queueBadge.textContent = queueText;
+            } else {
+                queueBadge = document.createElement('span');
+                queueBadge.className = 'valve-status-badge queued';
+                queueBadge.textContent = queueText;
+                headerRight.appendChild(queueBadge);
+            }
+        } else if (queueBadge) {
+            queueBadge.remove();
+        }
+        
+        // Get the valve-info container
+        const valveInfo = card.querySelector('.valve-info');
+        if (!valveInfo) return;
+        
+        // Handle time remaining and progress bar for running valves
+        let timeRemainingRow = Array.from(valveInfo.querySelectorAll('.valve-info-row')).find(row => 
+            row.querySelector('.valve-info-label')?.textContent === 'Time Remaining:'
+        );
+        let progressBar = valveInfo.querySelector('.valve-progress');
+        
+        if (valve.handled) {
+            const timeRemaining = formatTime(valve.seconds_remain);
+            const progress = valve.seconds_duration > 0 ? 
+                (valve.seconds_remain / valve.seconds_duration * 100) : 0;
+            
+            // If time remaining row doesn't exist, create it
+            if (!timeRemainingRow) {
+                const todayRow = Array.from(valveInfo.querySelectorAll('.valve-info-row')).find(row => 
+                    row.querySelector('.valve-info-label')?.textContent === 'Today:'
+                );
+                
+                timeRemainingRow = document.createElement('div');
+                timeRemainingRow.className = 'valve-info-row';
+                timeRemainingRow.innerHTML = `
+                    <span class="valve-info-label">Time Remaining:</span>
+                    <span class="valve-info-value">${timeRemaining}</span>
+                `;
+                
+                if (todayRow) {
+                    valveInfo.insertBefore(timeRemainingRow, todayRow);
+                } else {
+                    valveInfo.insertBefore(timeRemainingRow, valveInfo.firstChild);
+                }
+            } else {
+                // Update existing time remaining
+                const timeValueSpan = timeRemainingRow.querySelector('.valve-info-value');
+                if (timeValueSpan) {
+                    timeValueSpan.textContent = timeRemaining;
+                }
+            }
+            
+            // If progress bar doesn't exist, create it
+            if (!progressBar) {
+                progressBar = document.createElement('div');
+                progressBar.className = 'valve-progress';
+                progressBar.innerHTML = `
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${progress}%"></div>
+                    </div>
+                `;
+                
+                if (timeRemainingRow && timeRemainingRow.nextSibling) {
+                    valveInfo.insertBefore(progressBar, timeRemainingRow.nextSibling);
+                } else {
+                    const todayRow = Array.from(valveInfo.querySelectorAll('.valve-info-row')).find(row => 
+                        row.querySelector('.valve-info-label')?.textContent === 'Today:'
+                    );
+                    if (todayRow) {
+                        valveInfo.insertBefore(progressBar, todayRow);
+                    }
+                }
+            } else {
+                // Update existing progress bar
+                const progressFill = progressBar.querySelector('.progress-fill');
+                if (progressFill) {
+                    progressFill.style.width = `${progress}%`;
+                }
+            }
+        } else {
+            // Valve not running - remove time remaining and progress bar if they exist
+            if (timeRemainingRow) {
+                timeRemainingRow.remove();
+            }
+            if (progressBar) {
+                progressBar.remove();
+            }
+        }
+        
+        // Update today's stats
+        const todayValueSpan = Array.from(card.querySelectorAll('.valve-info-row')).find(row => 
+            row.querySelector('.valve-info-label')?.textContent === 'Today:'
+        )?.querySelector('.valve-info-value');
+        
+        if (todayValueSpan) {
+            todayValueSpan.textContent = `${formatTime(valve.seconds_daily)}${valve.liters_daily > 0 ? ` / ${valve.liters_daily.toFixed(1)}L` : ''}`;
+        }
+        
+        // Update next run if available
+        const nextRun = nextRunsData && nextRunsData[valve.name];
+        const nextRunFormatted = nextRun ? formatNextRun(nextRun.schedule_time_iso) : null;
+        const nextRunRow = Array.from(card.querySelectorAll('.valve-info-row')).find(row => 
+            row.querySelector('.valve-info-label')?.textContent === 'Next Run:'
+        );
+        
+        if (nextRunRow) {
+            const nextRunValue = nextRunRow.querySelector('.valve-info-value');
+            if (nextRunValue) {
+                if (nextRunFormatted) {
+                    nextRunValue.className = 'valve-info-value next-run-time';
+                    nextRunValue.textContent = `📅 ${nextRunFormatted}`;
+                } else {
+                    nextRunValue.className = 'valve-info-value next-run-none';
+                    nextRunValue.textContent = !valve.enabled ? 'Disabled' : (valve.suspended ? 'Suspended' : 'None in 7 days');
+                }
+            }
+        }
+        
+        // Update button states
+        const startBtn = card.querySelector('button[onclick*="startValveManual"]');
+        const stopBtn = card.querySelector('button[onclick*="stopValve"]');
+        const enableBtn = card.querySelector('button[onclick*="enableValve"]');
+        const disableBtn = card.querySelector('button[onclick*="disableValve"]');
+        const suspendBtn = card.querySelector('button[onclick*="suspendValve"]');
+        const resumeBtn = card.querySelector('button[onclick*="resumeValve"]');
+        
+        if (startBtn) startBtn.disabled = valve.is_open;
+        if (stopBtn) stopBtn.disabled = !valve.is_open;
+        
+        // Handle enable/disable button toggle
+        if (valve.enabled && enableBtn) {
+            enableBtn.outerHTML = `<button class="btn btn-warning btn-small" onclick="disableValve('${valve.name}')">🚫 Disable</button>`;
+        } else if (!valve.enabled && disableBtn) {
+            disableBtn.outerHTML = `<button class="btn btn-success btn-small" onclick="enableValve('${valve.name}')">✅ Enable</button>`;
+        }
+        
+        // Handle suspend/resume button toggle
+        if (valve.suspended && suspendBtn) {
+            suspendBtn.outerHTML = `<button class="btn btn-primary btn-small" onclick="resumeValve('${valve.name}')">▶️ Resume</button>`;
+        } else if (!valve.suspended && resumeBtn) {
+            resumeBtn.outerHTML = `<button class="btn btn-warning btn-small" onclick="suspendValve('${valve.name}')">⏸️ Suspend</button>`;
+        }
+    });
 }
 
 function getValveStatus(valve) {
@@ -474,22 +677,102 @@ function showQueueDialog(name) {
     }
 }
 
-async function showValveDetails(name) {
+async function toggleSchedulePanel(name) {
+    const panel = document.getElementById(`schedule-panel-${name}`);
+    if (!panel) return;
+    
+    // If panel is already visible, hide it
+    if (panel.style.display !== 'none') {
+        panel.style.display = 'none';
+        return;
+    }
+    
+    // Show panel and load schedule data
+    panel.style.display = 'block';
+    
     try {
         const details = await apiCall(`/api/valves/${name}`);
         
-        const schedules = details.schedules.map((s, i) => `
-Schedule ${i + 1}:
-  - Days: ${s.days.join(', ')}
-  - Seasons: ${s.seasons.join(', ')}
-  - Time: ${s.time_based_on} ${s.offset_minutes > 0 ? '+' : ''}${s.offset_minutes} min
-  - Duration: ${s.duration} minutes
-  - UV Adjustments: ${s.enable_uv_adjustments ? 'Enabled' : 'Disabled'}
-        `).join('\n');
+        if (!details.schedules || details.schedules.length === 0) {
+            panel.innerHTML = `
+                <div class="schedule-panel-empty">
+                    <p>No schedules configured for this valve</p>
+                </div>
+            `;
+            return;
+        }
         
-        alert(`Valve Details: ${name}\n\nType: ${details.type}\nSensor: ${details.sensor_name || 'None'}\n\n${schedules}`);
+        const schedulesHTML = details.schedules.map((s, i) => {
+            // Format days - show "Everyday" if empty or all 7 days
+            const allDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            let daysText = 'Everyday';
+            if (s.days && s.days.length > 0 && s.days.length < 7) {
+                // Check if it's all days
+                const hasAllDays = allDays.every(day => s.days.includes(day));
+                if (!hasAllDays) {
+                    daysText = s.days.join(', ');
+                }
+            }
+            
+            // Format seasons - show "All Year" if empty or all 4 seasons
+            const allSeasons = ['Spring', 'Summer', 'Fall', 'Winter'];
+            let seasonsText = 'All Year';
+            if (s.seasons && s.seasons.length > 0 && s.seasons.length < 4) {
+                // Check if it's all seasons
+                const hasAllSeasons = allSeasons.every(season => s.seasons.includes(season));
+                if (!hasAllSeasons) {
+                    seasonsText = s.seasons.join(', ');
+                }
+            }
+            
+            // Format time with offset and proper capitalization
+            let timeBasedOn = s.time_based_on.charAt(0).toUpperCase() + s.time_based_on.slice(1);
+            let timeText = timeBasedOn;
+            
+            if (s.time_based_on === 'fixed' && s.fixed_start_time) {
+                // Convert 24-hour time to 12-hour format to match "Next Run" display
+                const [hours, minutes] = s.fixed_start_time.split(':');
+                const hour = parseInt(hours);
+                const ampm = hour >= 12 ? 'PM' : 'AM';
+                const hour12 = hour % 12 || 12;
+                const formattedTime = `${hour12}:${minutes} ${ampm}`;
+                timeText = `${formattedTime} (Fixed)`;
+            } else if (s.offset_minutes !== 0) {
+                timeText += ` ${s.offset_minutes > 0 ? '+' : ''}${s.offset_minutes} min`;
+            }
+            
+            return `
+                <div class="schedule-item">
+                    <div class="schedule-item-header">
+                        <span class="schedule-number">Schedule ${i + 1}</span>
+                        ${s.enable_uv_adjustments ? '<span class="schedule-uv-pill">UV Adjusted</span>' : ''}
+                    </div>
+                    <div class="schedule-item-details">
+                        <div class="schedule-when">
+                            <span class="schedule-days">${daysText}</span>
+                            <span class="schedule-seasons">${seasonsText}</span>
+                        </div>
+                        <div class="schedule-detail-row">
+                            <span class="schedule-detail-label">Time:</span>
+                            <span class="schedule-detail-value">${timeText}</span>
+                        </div>
+                        <div class="schedule-detail-row">
+                            <span class="schedule-detail-label">Duration:</span>
+                            <span class="schedule-detail-value">${s.duration} minutes</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        panel.innerHTML = schedulesHTML;
     } catch (error) {
-        console.error('Failed to load valve details:', error);
+        panel.innerHTML = `
+            <div class="schedule-panel-error">
+                <p>Failed to load schedules</p>
+            </div>
+        `;
+        console.error('Failed to load valve schedules:', error);
     }
 }
 

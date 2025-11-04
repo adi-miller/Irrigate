@@ -195,6 +195,7 @@ async def get_valve_details(valve_name: str):
             "seasons": s.seasons if hasattr(s, 'seasons') else [],
             "days": s.days if hasattr(s, 'days') else [],
             "time_based_on": s.time_based_on,
+            "fixed_start_time": s.fixed_start_time if hasattr(s, 'fixed_start_time') else None,
             "offset_minutes": s.offset_minutes if hasattr(s, 'offset_minutes') else 0,
             "duration": s.duration,
             "enable_uv_adjustments": s.enable_uv_adjustments
