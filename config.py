@@ -8,6 +8,7 @@ from waterflows import waterflowFactory
 class Config:
   def __init__(self, logger, filename):
     self.logger = logger
+    self.filename = filename  # Store filename for later saving
     with open(filename, 'r') as stream:
       try:
         self.cfg = json.loads(stream.read(), object_hook=lambda d: SimpleNamespace(**d))
@@ -83,3 +84,59 @@ class Config:
     if _waterflow_cfg is None:
       return None
     return waterflowFactory(_waterflow_cfg.type, self.logger, _waterflow_cfg)
+
+  def save_runtime_config(self):
+    """Save runtime-editable configuration back to the config file.
+    
+    This method updates valve schedules and enabled flags - all other
+    config values remain unchanged from the file.
+    """
+    try:
+      # Read the current config file to preserve formatting and all other settings
+      with open(self.filename, 'r') as f:
+        config_data = json.load(f)
+      
+      # Update only the runtime-editable fields for each valve
+      for valve_name, valve_obj in self.valves.items():
+        # Find the matching valve in the config data
+        for valve_cfg in config_data['valves']:
+          if valve_cfg['name'] == valve_name:
+            # Update enabled flag
+            valve_cfg['enabled'] = valve_obj.enabled
+            
+            # Rebuild the schedules array completely
+            new_schedules = []
+            for schedule in valve_obj.schedules:
+              sched_dict = {}
+              
+              # Add all schedule fields
+              if hasattr(schedule, 'seasons') and schedule.seasons:
+                sched_dict['seasons'] = schedule.seasons
+              if hasattr(schedule, 'days') and schedule.days:
+                sched_dict['days'] = schedule.days
+              if hasattr(schedule, 'time_based_on'):
+                sched_dict['time_based_on'] = schedule.time_based_on
+              if hasattr(schedule, 'fixed_start_time'):
+                sched_dict['fixed_start_time'] = schedule.fixed_start_time
+              if hasattr(schedule, 'offset_minutes'):
+                sched_dict['offset_minutes'] = schedule.offset_minutes
+              if hasattr(schedule, 'duration'):
+                sched_dict['duration'] = schedule.duration
+              if hasattr(schedule, 'enable_uv_adjustments'):
+                sched_dict['enable_uv_adjustments'] = schedule.enable_uv_adjustments
+              
+              new_schedules.append(sched_dict)
+            
+            # Replace the schedules array
+            valve_cfg['schedules'] = new_schedules
+            break
+      
+      # Write the updated config back to file with nice formatting
+      with open(self.filename, 'w') as f:
+        json.dump(config_data, f, indent=2)
+      
+      self.logger.info(f"Runtime configuration saved to '{self.filename}'")
+      
+    except Exception as ex:
+      self.logger.error(f"Error saving runtime configuration: {ex}")
+      raise

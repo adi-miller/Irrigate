@@ -473,6 +473,215 @@ async def resume_valve(valve_name: str):
     return {"success": True, "valve": valve_name, "action": "resumed"}
 
 
+@app.put("/api/valves/{valve_name}/schedules/{schedule_index}")
+async def update_valve_schedule(valve_name: str, schedule_index: int, schedule_data: dict):
+    """Update a specific schedule for a valve
+    
+    Request body should contain schedule fields:
+    {
+        "seasons": ["Spring", "Summer"],  // optional
+        "days": ["Mon", "Tue", "Wed"],    // optional
+        "time_based_on": "fixed|sunrise|sunset",
+        "fixed_start_time": "06:00",      // required if time_based_on is "fixed"
+        "offset_minutes": -30,            // optional, for sunrise/sunset
+        "duration": 20,                   // minutes
+        "enable_uv_adjustments": true     // optional
+    }
+    """
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    
+    if schedule_index < 0 or schedule_index >= len(valve.schedules):
+        raise HTTPException(status_code=404, detail=f"Schedule index {schedule_index} not found for valve '{valve_name}'")
+    
+    try:
+        # Update the schedule object in memory
+        sched = valve.schedules[schedule_index]
+        
+        # Update fields that are provided
+        if "seasons" in schedule_data:
+            sched.seasons = schedule_data["seasons"]
+        if "days" in schedule_data:
+            sched.days = schedule_data["days"]
+        if "time_based_on" in schedule_data:
+            sched.time_based_on = schedule_data["time_based_on"]
+        if "fixed_start_time" in schedule_data:
+            sched.fixed_start_time = schedule_data["fixed_start_time"]
+        if "offset_minutes" in schedule_data:
+            sched.offset_minutes = schedule_data["offset_minutes"]
+        if "duration" in schedule_data:
+            sched.duration = schedule_data["duration"]
+        if "enable_uv_adjustments" in schedule_data:
+            sched.enable_uv_adjustments = schedule_data["enable_uv_adjustments"]
+        
+        # Validate the schedule
+        if sched.time_based_on == "fixed" and not hasattr(sched, 'fixed_start_time'):
+            raise HTTPException(status_code=400, detail="fixed_start_time is required when time_based_on is 'fixed'")
+        
+        # Persist changes to config file
+        irrigate_instance.cfg.save_runtime_config()
+        
+        irrigate_instance.logger.info(f"Updated schedule {schedule_index} for valve '{valve_name}'")
+        
+        invalidate_next_runs_cache()
+        
+        return {
+            "success": True,
+            "valve": valve_name,
+            "schedule_index": schedule_index,
+            "action": "schedule_updated"
+        }
+        
+    except Exception as ex:
+        irrigate_instance.logger.error(f"Error updating schedule: {ex}")
+        raise HTTPException(status_code=400, detail=str(ex))
+
+
+@app.post("/api/valves/{valve_name}/schedules")
+async def create_valve_schedule(valve_name: str, schedule_data: dict):
+    """Create a new schedule for a valve
+    
+    Request body should contain schedule fields:
+    {
+        "seasons": ["Spring", "Summer"],  // optional
+        "days": ["Mon", "Tue", "Wed"],    // optional
+        "time_based_on": "fixed|sunrise|sunset",
+        "fixed_start_time": "06:00",      // required if time_based_on is "fixed"
+        "offset_minutes": -30,            // optional, for sunrise/sunset
+        "duration": 20,                   // minutes
+        "enable_uv_adjustments": true     // optional
+    }
+    """
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    
+    try:
+        from types import SimpleNamespace
+        
+        # Create a new schedule object
+        new_schedule = SimpleNamespace()
+        
+        # Set required and optional fields
+        new_schedule.seasons = schedule_data.get("seasons", [])
+        new_schedule.days = schedule_data.get("days", [])
+        new_schedule.time_based_on = schedule_data.get("time_based_on", "fixed")
+        new_schedule.duration = schedule_data.get("duration", 10)
+        new_schedule.enable_uv_adjustments = schedule_data.get("enable_uv_adjustments", False)
+        
+        # Handle time-based fields
+        if new_schedule.time_based_on == "fixed":
+            if "fixed_start_time" not in schedule_data:
+                raise HTTPException(status_code=400, detail="fixed_start_time is required when time_based_on is 'fixed'")
+            new_schedule.fixed_start_time = schedule_data["fixed_start_time"]
+        else:
+            new_schedule.offset_minutes = schedule_data.get("offset_minutes", 0)
+        
+        # Add the new schedule to the valve
+        valve.schedules.append(new_schedule)
+        
+        # Persist changes to config file
+        irrigate_instance.cfg.save_runtime_config()
+        
+        schedule_index = len(valve.schedules) - 1
+        irrigate_instance.logger.info(f"Created new schedule {schedule_index} for valve '{valve_name}'")
+        
+        invalidate_next_runs_cache()
+        
+        return {
+            "success": True,
+            "valve": valve_name,
+            "schedule_index": schedule_index,
+            "action": "schedule_created"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as ex:
+        irrigate_instance.logger.error(f"Error creating schedule: {ex}")
+        raise HTTPException(status_code=400, detail=str(ex))
+
+
+@app.delete("/api/valves/{valve_name}/schedules/{schedule_index}")
+async def delete_valve_schedule(valve_name: str, schedule_index: int):
+    """Delete a specific schedule from a valve"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    
+    if schedule_index < 0 or schedule_index >= len(valve.schedules):
+        raise HTTPException(status_code=404, detail=f"Schedule index {schedule_index} not found for valve '{valve_name}'")
+    
+    if len(valve.schedules) == 1:
+        raise HTTPException(status_code=400, detail=f"Cannot delete the last schedule for valve '{valve_name}'. A valve must have at least one schedule.")
+    
+    try:
+        # Remove the schedule
+        deleted_schedule = valve.schedules.pop(schedule_index)
+        
+        # Persist changes to config file
+        irrigate_instance.cfg.save_runtime_config()
+        
+        irrigate_instance.logger.info(f"Deleted schedule {schedule_index} from valve '{valve_name}'")
+        
+        invalidate_next_runs_cache()
+        
+        return {
+            "success": True,
+            "valve": valve_name,
+            "schedule_index": schedule_index,
+            "action": "schedule_deleted",
+            "remaining_schedules": len(valve.schedules)
+        }
+        
+    except Exception as ex:
+        irrigate_instance.logger.error(f"Error deleting schedule: {ex}")
+        raise HTTPException(status_code=400, detail=str(ex))
+
+
+@app.put("/api/valves/{valve_name}/enabled")
+async def update_valve_enabled(valve_name: str, enabled: bool):
+    """Update valve enabled status and persist to config
+    
+    Request body: {"enabled": true/false}
+    """
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if valve_name not in irrigate_instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
+    
+    valve = irrigate_instance.valves[valve_name]
+    valve.enabled = enabled
+    
+    # Persist changes to config file
+    irrigate_instance.cfg.save_runtime_config()
+    
+    irrigate_instance.logger.info(f"Valve '{valve_name}' enabled status set to {enabled}")
+    
+    invalidate_next_runs_cache()
+    
+    return {
+        "success": True,
+        "valve": valve_name,
+        "enabled": enabled,
+        "action": "enabled_updated"
+    }
+
+
 @app.post("/api/simulate", response_class=PlainTextResponse)
 async def simulate_schedule(
     date: str = None,

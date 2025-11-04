@@ -137,8 +137,11 @@ async function loadNextRuns() {
 
 async function loadConfig() {
     try {
-        const config = await apiCall('/api/config');
-        renderConfig(config);
+        const [config, status] = await Promise.all([
+            apiCall('/api/config'),
+            apiCall('/api/status')
+        ]);
+        renderConfig(config, status.valves);
     } catch (error) {
         console.error('Failed to load config:', error);
     }
@@ -961,7 +964,7 @@ function renderQueue(queueData) {
 
 // ==================== CONFIG RENDERING ====================
 
-function renderConfig(config) {
+function renderConfig(config, valves) {
     const view = document.getElementById('config-view');
     if (!view) return;
     
@@ -1025,7 +1028,335 @@ function renderConfig(config) {
                 </table>
             </div>
         ` : ''}
+        
+        <div class="config-section">
+            <h3>Schedules</h3>
+            <div id="schedules-container">
+                ${valves ? renderValveSchedules(valves) : '<p>Loading schedules...</p>'}
+            </div>
+        </div>
     `;
+    
+    // Load schedules for all valves after rendering
+    if (valves) {
+        valves.forEach(valve => {
+            loadValveSchedules(valve.name);
+        });
+    }
+}
+
+function renderValveSchedules(valves) {
+    if (!valves || valves.length === 0) {
+        return '<p>No valves configured</p>';
+    }
+    
+    return valves.map(valve => `
+        <div class="valve-schedule-section">
+            <div class="valve-schedule-header">
+                <h4>${valve.name}</h4>
+                <button class="btn btn-primary btn-small" onclick="addSchedule('${valve.name}')">
+                    ➕ Add Schedule
+                </button>
+            </div>
+            <div class="schedules-list" id="schedules-${valve.name}">
+                ${renderSchedulesList(valve.name)}
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderSchedulesList(valveName) {
+    return `<div class="schedule-loading">Loading...</div>`;
+}
+
+async function loadValveSchedules(valveName) {
+    try {
+        const valve = await apiCall(`/api/valves/${valveName}`);
+        const container = document.getElementById(`schedules-${valveName}`);
+        if (!container) return;
+        
+        if (!valve.schedules || valve.schedules.length === 0) {
+            container.innerHTML = '<p class="no-schedules">No schedules configured</p>';
+            return;
+        }
+        
+        container.innerHTML = valve.schedules.map((sched, idx) => `
+            <div class="schedule-item" id="schedule-${valveName}-${idx}">
+                <div class="schedule-display" id="schedule-display-${valveName}-${idx}">
+                    ${renderScheduleDisplay(sched, valveName, idx)}
+                </div>
+                <div class="schedule-edit" id="schedule-edit-${valveName}-${idx}" style="display: none;">
+                    ${renderScheduleEditor(sched, valveName, idx)}
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Failed to load schedules:', error);
+        const container = document.getElementById(`schedules-${valveName}`);
+        if (container) {
+            container.innerHTML = '<p class="error">Failed to load schedules</p>';
+        }
+    }
+}
+
+function renderScheduleDisplay(sched, valveName, idx) {
+    const days = sched.days && sched.days.length > 0 ? sched.days.join(', ') : 'Every day';
+    const seasons = sched.seasons && sched.seasons.length > 0 ? sched.seasons.join(', ') : 'All seasons';
+    
+    let timeStr = '';
+    if (sched.time_based_on === 'fixed') {
+        timeStr = `at ${sched.fixed_start_time}`;
+    } else if (sched.time_based_on === 'sunrise') {
+        const offset = sched.offset_minutes || 0;
+        timeStr = offset === 0 ? 'at sunrise' : 
+                  offset > 0 ? `${offset}min after sunrise` : 
+                  `${Math.abs(offset)}min before sunrise`;
+    } else if (sched.time_based_on === 'sunset') {
+        const offset = sched.offset_minutes || 0;
+        timeStr = offset === 0 ? 'at sunset' : 
+                  offset > 0 ? `${offset}min after sunset` : 
+                  `${Math.abs(offset)}min before sunset`;
+    }
+    
+    return `
+        <div class="schedule-info">
+            <div class="schedule-row">
+                <span class="schedule-label">Time:</span>
+                <span class="schedule-value">${timeStr}</span>
+            </div>
+            <div class="schedule-row">
+                <span class="schedule-label">Duration:</span>
+                <span class="schedule-value">${sched.duration} minutes</span>
+            </div>
+            <div class="schedule-row">
+                <span class="schedule-label">Days:</span>
+                <span class="schedule-value">${days}</span>
+            </div>
+            <div class="schedule-row">
+                <span class="schedule-label">Seasons:</span>
+                <span class="schedule-value">${seasons}</span>
+            </div>
+            <div class="schedule-row">
+                <span class="schedule-label">UV Adjustments:</span>
+                <span class="schedule-value">${sched.enable_uv_adjustments ? '✅ Enabled' : '🚫 Disabled'}</span>
+            </div>
+        </div>
+        <div class="schedule-actions">
+            <button class="btn btn-secondary btn-small" onclick="editSchedule('${valveName}', ${idx})">
+                ✏️ Edit
+            </button>
+            <button class="btn btn-danger btn-small" onclick="deleteSchedule('${valveName}', ${idx})">
+                🗑️ Delete
+            </button>
+        </div>
+    `;
+}
+
+function renderScheduleEditor(sched, valveName, idx) {
+    const isNew = idx === -1;
+    return `
+        <form class="schedule-form" onsubmit="saveSchedule(event, '${valveName}', ${idx})">
+            <div class="form-group">
+                <label>Time Based On:</label>
+                <select id="time_based_on-${valveName}-${idx}" class="form-control" onchange="updateTimeFields('${valveName}', ${idx})">
+                    <option value="fixed" ${sched.time_based_on === 'fixed' ? 'selected' : ''}>Fixed Time</option>
+                    <option value="sunrise" ${sched.time_based_on === 'sunrise' ? 'selected' : ''}>Sunrise</option>
+                    <option value="sunset" ${sched.time_based_on === 'sunset' ? 'selected' : ''}>Sunset</option>
+                </select>
+            </div>
+            
+            <div class="form-group" id="fixed_time_group-${valveName}-${idx}" style="${sched.time_based_on === 'fixed' ? '' : 'display: none;'}">
+                <label>Start Time:</label>
+                <input type="time" id="fixed_start_time-${valveName}-${idx}" class="form-control" 
+                       value="${sched.fixed_start_time || '06:00'}">
+            </div>
+            
+            <div class="form-group" id="offset_group-${valveName}-${idx}" style="${sched.time_based_on !== 'fixed' ? '' : 'display: none;'}">
+                <label>Offset (minutes):</label>
+                <input type="number" id="offset_minutes-${valveName}-${idx}" class="form-control" 
+                       value="${sched.offset_minutes || 0}" step="1">
+                <small>Positive = after, Negative = before</small>
+            </div>
+            
+            <div class="form-group">
+                <label>Duration (minutes):</label>
+                <input type="number" id="duration-${valveName}-${idx}" class="form-control" 
+                       value="${sched.duration || 10}" min="1" required>
+            </div>
+            
+            <div class="form-group">
+                <label>Days (comma-separated, e.g., Mon,Wed,Fri):</label>
+                <input type="text" id="days-${valveName}-${idx}" class="form-control" 
+                       value="${sched.days && sched.days.length > 0 ? sched.days.join(',') : ''}"
+                       placeholder="Leave empty for every day">
+            </div>
+            
+            <div class="form-group">
+                <label>Seasons (comma-separated, e.g., Spring,Summer):</label>
+                <input type="text" id="seasons-${valveName}-${idx}" class="form-control" 
+                       value="${sched.seasons && sched.seasons.length > 0 ? sched.seasons.join(',') : ''}"
+                       placeholder="Leave empty for all seasons">
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="enable_uv_adjustments-${valveName}-${idx}" 
+                           ${sched.enable_uv_adjustments ? 'checked' : ''}>
+                    Enable UV Adjustments
+                </label>
+            </div>
+            
+            <div class="schedule-actions">
+                <button type="submit" class="btn btn-success btn-small">
+                    💾 Save
+                </button>
+                <button type="button" class="btn btn-secondary btn-small" onclick="cancelEditSchedule('${valveName}', ${idx})">
+                    ❌ Cancel
+                </button>
+            </div>
+        </form>
+    `;
+}
+
+// ==================== SCHEDULE MANAGEMENT ====================
+
+function updateTimeFields(valveName, idx) {
+    const timeBasedOn = document.getElementById(`time_based_on-${valveName}-${idx}`).value;
+    const fixedGroup = document.getElementById(`fixed_time_group-${valveName}-${idx}`);
+    const offsetGroup = document.getElementById(`offset_group-${valveName}-${idx}`);
+    
+    if (timeBasedOn === 'fixed') {
+        fixedGroup.style.display = '';
+        offsetGroup.style.display = 'none';
+    } else {
+        fixedGroup.style.display = 'none';
+        offsetGroup.style.display = '';
+    }
+}
+
+async function addSchedule(valveName) {
+    try {
+        // Create a new schedule with default values
+        const defaultSchedule = {
+            time_based_on: 'fixed',
+            fixed_start_time: '06:00',
+            duration: 10,
+            days: [],
+            seasons: [],
+            enable_uv_adjustments: false
+        };
+        
+        const result = await apiCall(`/api/valves/${valveName}/schedules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(defaultSchedule)
+        });
+        
+        showToast(`Schedule added to ${valveName}`, 'success');
+        
+        // Reload the schedules for this valve
+        await loadValveSchedules(valveName);
+        
+        // Automatically enter edit mode for the new schedule
+        const newIdx = result.schedule_index;
+        editSchedule(valveName, newIdx);
+        
+    } catch (error) {
+        console.error('Failed to add schedule:', error);
+    }
+}
+
+function editSchedule(valveName, idx) {
+    const displayEl = document.getElementById(`schedule-display-${valveName}-${idx}`);
+    const editEl = document.getElementById(`schedule-edit-${valveName}-${idx}`);
+    
+    if (displayEl && editEl) {
+        displayEl.style.display = 'none';
+        editEl.style.display = 'block';
+    }
+}
+
+function cancelEditSchedule(valveName, idx) {
+    const displayEl = document.getElementById(`schedule-display-${valveName}-${idx}`);
+    const editEl = document.getElementById(`schedule-edit-${valveName}-${idx}`);
+    
+    if (displayEl && editEl) {
+        displayEl.style.display = 'block';
+        editEl.style.display = 'none';
+    }
+}
+
+async function saveSchedule(event, valveName, idx) {
+    event.preventDefault();
+    
+    try {
+        const timeBasedOn = document.getElementById(`time_based_on-${valveName}-${idx}`).value;
+        const duration = parseInt(document.getElementById(`duration-${valveName}-${idx}`).value);
+        const daysStr = document.getElementById(`days-${valveName}-${idx}`).value.trim();
+        const seasonsStr = document.getElementById(`seasons-${valveName}-${idx}`).value.trim();
+        const enableUv = document.getElementById(`enable_uv_adjustments-${valveName}-${idx}`).checked;
+        
+        const scheduleData = {
+            time_based_on: timeBasedOn,
+            duration: duration,
+            enable_uv_adjustments: enableUv
+        };
+        
+        // Add days if specified
+        if (daysStr) {
+            scheduleData.days = daysStr.split(',').map(d => d.trim()).filter(d => d);
+        } else {
+            scheduleData.days = [];
+        }
+        
+        // Add seasons if specified
+        if (seasonsStr) {
+            scheduleData.seasons = seasonsStr.split(',').map(s => s.trim()).filter(s => s);
+        } else {
+            scheduleData.seasons = [];
+        }
+        
+        // Add time-specific fields
+        if (timeBasedOn === 'fixed') {
+            scheduleData.fixed_start_time = document.getElementById(`fixed_start_time-${valveName}-${idx}`).value;
+        } else {
+            scheduleData.offset_minutes = parseInt(document.getElementById(`offset_minutes-${valveName}-${idx}`).value) || 0;
+        }
+        
+        await apiCall(`/api/valves/${valveName}/schedules/${idx}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(scheduleData)
+        });
+        
+        showToast(`Schedule updated for ${valveName}`, 'success');
+        
+        // Reload the schedules
+        await loadValveSchedules(valveName);
+        
+    } catch (error) {
+        console.error('Failed to save schedule:', error);
+    }
+}
+
+async function deleteSchedule(valveName, idx) {
+    if (!confirm(`Are you sure you want to delete this schedule for ${valveName}?`)) {
+        return;
+    }
+    
+    try {
+        await apiCall(`/api/valves/${valveName}/schedules/${idx}`, {
+            method: 'DELETE'
+        });
+        
+        showToast(`Schedule deleted from ${valveName}`, 'success');
+        
+        // Reload the schedules
+        await loadValveSchedules(valveName);
+        
+    } catch (error) {
+        console.error('Failed to delete schedule:', error);
+    }
 }
 
 // ==================== SIMULATION ====================
