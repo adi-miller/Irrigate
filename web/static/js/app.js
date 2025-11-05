@@ -1036,7 +1036,7 @@ function renderConfig(config, valves) {
 
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="sim-rain">Rain (disables irrigation)</label>
+                                <label for="sim-rain">Should Disable</label>
                                 <select id="sim-rain">
                                     <option value="">Normal</option>
                                     <option value="true">Yes (disable)</option>
