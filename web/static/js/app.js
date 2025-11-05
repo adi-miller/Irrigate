@@ -423,6 +423,11 @@ function renderValves(valves, queueData = null) {
         
         return `
             <div class="valve-card" id="valve-${valve.name}">
+                ${valve.handled ? `
+                    <div class="valve-progress-top">
+                        <div class="progress-fill" style="width: ${progress}%"></div>
+                    </div>
+                ` : ''}
                 <div class="valve-header">
                     <h3 class="valve-name">${valve.name}</h3>
                     <div class="valve-header-right">
@@ -432,18 +437,6 @@ function renderValves(valves, queueData = null) {
                 </div>
                 
                 <div class="valve-info">
-                    ${valve.handled ? `
-                        <div class="valve-info-row">
-                            <span class="valve-info-label">Time Remaining:</span>
-                            <span class="valve-info-value">${timeRemaining}</span>
-                        </div>
-                        <div class="valve-progress">
-                            <div class="progress-bar">
-                                <div class="progress-fill" style="width: ${progress}%"></div>
-                            </div>
-                        </div>
-                    ` : ''}
-                    
                     <div class="valve-info-row">
                         <span class="valve-info-label">Daily Total:</span>
                         <span class="valve-info-value">
@@ -571,63 +564,19 @@ function updateValves(valves, queueData = null) {
         const valveInfo = card.querySelector('.valve-info');
         if (!valveInfo) return;
         
-        // Handle time remaining and progress bar for running valves
-        let timeRemainingRow = Array.from(valveInfo.querySelectorAll('.valve-info-row')).find(row => 
-            row.querySelector('.valve-info-label')?.textContent === 'Time Remaining:'
-        );
-        let progressBar = valveInfo.querySelector('.valve-progress');
+        // Handle progress bar for running valves
+        let progressBar = card.querySelector('.valve-progress-top');
         
         if (valve.handled) {
-            const timeRemaining = formatTime(valve.seconds_remain);
             const progress = valve.seconds_duration > 0 ? 
                 (valve.seconds_remain / valve.seconds_duration * 100) : 0;
             
-            // If time remaining row doesn't exist, create it
-            if (!timeRemainingRow) {
-                const todayRow = Array.from(valveInfo.querySelectorAll('.valve-info-row')).find(row => 
-                    row.querySelector('.valve-info-label')?.textContent === 'Today:'
-                );
-                
-                timeRemainingRow = document.createElement('div');
-                timeRemainingRow.className = 'valve-info-row';
-                timeRemainingRow.innerHTML = `
-                    <span class="valve-info-label">Time Remaining:</span>
-                    <span class="valve-info-value">${timeRemaining}</span>
-                `;
-                
-                if (todayRow) {
-                    valveInfo.insertBefore(timeRemainingRow, todayRow);
-                } else {
-                    valveInfo.insertBefore(timeRemainingRow, valveInfo.firstChild);
-                }
-            } else {
-                // Update existing time remaining
-                const timeValueSpan = timeRemainingRow.querySelector('.valve-info-value');
-                if (timeValueSpan) {
-                    timeValueSpan.textContent = timeRemaining;
-                }
-            }
-            
-            // If progress bar doesn't exist, create it
+            // If progress bar doesn't exist, create it at top of card
             if (!progressBar) {
                 progressBar = document.createElement('div');
-                progressBar.className = 'valve-progress';
-                progressBar.innerHTML = `
-                    <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${progress}%"></div>
-                    </div>
-                `;
-                
-                if (timeRemainingRow && timeRemainingRow.nextSibling) {
-                    valveInfo.insertBefore(progressBar, timeRemainingRow.nextSibling);
-                } else {
-                    const todayRow = Array.from(valveInfo.querySelectorAll('.valve-info-row')).find(row => 
-                        row.querySelector('.valve-info-label')?.textContent === 'Today:'
-                    );
-                    if (todayRow) {
-                        valveInfo.insertBefore(progressBar, todayRow);
-                    }
-                }
+                progressBar.className = 'valve-progress-top';
+                progressBar.innerHTML = `<div class="progress-fill" style="width: ${progress}%"></div>`;
+                card.insertBefore(progressBar, card.firstChild);
             } else {
                 // Update existing progress bar
                 const progressFill = progressBar.querySelector('.progress-fill');
@@ -636,10 +585,7 @@ function updateValves(valves, queueData = null) {
                 }
             }
         } else {
-            // Valve not running - remove time remaining and progress bar if they exist
-            if (timeRemainingRow) {
-                timeRemainingRow.remove();
-            }
+            // Valve not running - remove progress bar if it exists
             if (progressBar) {
                 progressBar.remove();
             }
@@ -703,7 +649,13 @@ function updateValves(valves, queueData = null) {
 function getValveStatus(valve) {
     if (!valve.enabled) return 'Disabled';
     if (valve.suspended) return 'Suspended';
-    if (valve.is_open) return 'Open';
+    if (valve.is_open) {
+        // If valve is running, include time remaining
+        if (valve.handled && valve.seconds_remain > 0) {
+            return `Open (${formatTime(valve.seconds_remain)} left)`;
+        }
+        return 'Open';
+    }
     if (valve.seconds_last > 60 && valve.liters_last === 0) return 'Malfunction';
     return 'Closed';
 }

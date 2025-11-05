@@ -332,6 +332,8 @@ main {
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     padding: 1.5rem;
+    position: relative;
+    overflow: hidden;
 }
 
 .valve-header {
@@ -462,21 +464,20 @@ main {
     font-style: italic;
 }
 
-.valve-progress {
-    margin-top: 0.5rem;
-}
-
-.progress-bar {
-    width: 100%;
-    height: 6px;
+.valve-progress-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
     background: var(--gray-300);
-    border-radius: 3px;
+    border-radius: var(--radius) var(--radius) 0 0;
     overflow: hidden;
 }
 
-.progress-fill {
+.valve-progress-top .progress-fill {
     height: 100%;
-    background: var(--primary);
+    background: linear-gradient(90deg, var(--primary) 0%, var(--primary-dark) 100%);
     transition: width 1s linear;
 }
 
