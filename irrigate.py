@@ -304,6 +304,11 @@ class Irrigate:
         else:
           valve = irrigateJob.valve
           valve.handled = True
+          
+          # Link global waterflow sensor to this valve during operation
+          if self.waterflow and self.waterflow.started:
+            valve.waterflow = self.waterflow
+          
           self.logger.info("Irrigation cycle start for valve '%s' for %s minutes." % (valve.name, irrigateJob.duration))
           duration = timedelta(minutes = irrigateJob.duration)
           valve.secondsLast = 0
@@ -369,6 +374,10 @@ class Irrigate:
             valve.is_open = False
             valve.close()
             self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.secondsDaily))
+          
+          # Unlink waterflow sensor from valve
+          valve.waterflow = None
+          
           valve.handled = False
           self.telemetryValve(valve)
         self.q.task_done()

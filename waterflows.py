@@ -17,10 +17,10 @@ class BaseWaterflow():
     self._lastLiter_1m = 0
     self._lastupdate = datetime.now()
     self._lastHistoryUpdate = datetime.now()
-    self._history = deque(maxlen=60)  # Store last 60 minutes of flow data
-    # Initialize with 60 zero values
-    for _ in range(60):
-      self._history.append(0.0)
+    self._history = deque(maxlen=120)  # Store last 120 minutes of flow data
+    # Initialize with 120 zero values
+    for _ in range(120):
+      self._history.append(0)
 
   def lastLiter_1m(self):
     if datetime.now() > self._lastupdate + timedelta(0, 60):
@@ -39,7 +39,7 @@ class BaseWaterflow():
       self._lastHistoryUpdate = now
   
   def getHistory(self):
-    """Return list of last 60 minutes of flow data"""
+    """Return list of last 120 minutes of flow data"""
     return list(self._history)
 
 class TestWaterflow(BaseWaterflow):

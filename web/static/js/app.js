@@ -331,23 +331,34 @@ function updateWaterflowChart(waterflow) {
     // Find max value for scaling (or use 15 as a reasonable max)
     const maxValue = Math.max(15, ...history);
     
-    // Draw bars from right to left (newest on right)
+    // Draw bars from left to right (oldest to newest)
+    // History array order: oldest...newest
     for (let i = 0; i < barCount; i++) {
         const value = history[i] || 0;
-        const barHeight = (value / maxValue) * height;
-        const x = width - (barCount - i) * barWidth;
-        const y = height - barHeight;
+        const x = i * barWidth;
         
         // Color based on value
         let color;
+        let barHeight;
+        let y;
+        
         if (value === 0) {
-            color = '#e0e0e0'; // Gray for zero/no data
-        } else if (value <= 5) {
-            color = '#81d4fa'; // Light blue
-        } else if (value < 10) {
-            color = '#ff9800'; // Orange
+            // For zero values, draw a 1-pixel gray bar at the bottom
+            color = '#ccccccff';
+            barHeight = 10;
+            y = height - 1;
         } else {
-            color = '#f44336'; // Red
+            // For non-zero values, scale normally
+            barHeight = (value / maxValue) * height;
+            y = height - barHeight;
+            
+            if (value <= 5) {
+                color = '#81d4fa'; // Light blue
+            } else if (value < 10) {
+                color = '#ff9800'; // Orange
+            } else {
+                color = '#f44336'; // Red
+            }
         }
         
         ctx.fillStyle = color;
@@ -436,8 +447,7 @@ function renderValves(valves, queueData = null) {
                     <div class="valve-info-row">
                         <span class="valve-info-label">Daily Total:</span>
                         <span class="valve-info-value">
-                            💧${formatTime(valve.seconds_daily)}
-                            ${valve.liters_daily > 0 ? ` / ${valve.liters_daily.toFixed(1)}L` : ''}
+                            ⏱️ ${formatTime(valve.seconds_daily)} <span class="valve-liters">💧 ${valve.liters_daily.toFixed(1)}L</span>
                         </span>
                     </div>
                     
@@ -637,11 +647,11 @@ function updateValves(valves, queueData = null) {
         
         // Update today's stats
         const todayValueSpan = Array.from(card.querySelectorAll('.valve-info-row')).find(row => 
-            row.querySelector('.valve-info-label')?.textContent === 'Today:'
+            row.querySelector('.valve-info-label')?.textContent === 'Daily Total:'
         )?.querySelector('.valve-info-value');
         
         if (todayValueSpan) {
-            todayValueSpan.textContent = `${formatTime(valve.seconds_daily)}${valve.liters_daily > 0 ? ` / ${valve.liters_daily.toFixed(1)}L` : ''}`;
+            todayValueSpan.innerHTML = `⏱️ ${formatTime(valve.seconds_daily)} <span class="valve-liters">💧 ${valve.liters_daily.toFixed(1)}L</span>`;
         }
         
         // Update next run if available
