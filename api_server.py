@@ -779,7 +779,7 @@ async def serve_frontend():
     return FileResponse('web/index.html')
 
 
-def run_api_server(irrigate, host="0.0.0.0", port=80):
+def run_api_server(irrigate, host="0.0.0.0", port=8000):
     global irrigate_instance
     irrigate_instance = irrigate
     
