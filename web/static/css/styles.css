@@ -166,6 +166,26 @@ header h1 {
     width: 100%;
     height: 40px;
     display: block;
+    cursor: crosshair;
+}
+
+.waterflow-tooltip {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.2s;
+    line-height: 1.4;
+}
+
+.waterflow-tooltip.visible {
+    opacity: 1;
 }
 
 /* Status Overlay Container */

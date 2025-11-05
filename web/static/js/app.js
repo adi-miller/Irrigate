@@ -311,6 +311,11 @@ function updateWaterflowChart(waterflow) {
     // Show the bar even if history is empty or not yet populated
     historyBar.style.display = 'block';
     
+    // Store waterflow data for tooltip access
+    if (window.updateWaterflowData) {
+        window.updateWaterflowData(waterflow);
+    }
+    
     // Setup canvas
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
@@ -368,6 +373,64 @@ function updateWaterflowChart(waterflow) {
         }
     }
 }
+
+// Setup tooltip for waterflow chart
+function setupWaterflowTooltip() {
+    const canvas = document.getElementById('waterflow-chart');
+    const tooltip = document.getElementById('waterflow-tooltip');
+    
+    if (!canvas || !tooltip) return;
+    
+    let currentWaterflowData = null;
+    
+    // Store waterflow data for tooltip access
+    window.updateWaterflowData = function(waterflow) {
+        currentWaterflowData = waterflow;
+    };
+    
+    canvas.addEventListener('mousemove', (e) => {
+        if (!currentWaterflowData || !currentWaterflowData.history) {
+            tooltip.classList.remove('visible');
+            return;
+        }
+        
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const barCount = 120;
+        const barWidth = rect.width / barCount;
+        const barIndex = Math.floor(x / barWidth);
+        
+        if (barIndex >= 0 && barIndex < barCount) {
+            const history = currentWaterflowData.history;
+            const value = history[barIndex] !== undefined ? history[barIndex] : 0;
+            
+            // Calculate the timestamp for this bar
+            // The most recent data is on the right (index 119), oldest on left (index 0)
+            const minutesAgo = barCount - 1 - barIndex;
+            const timestamp = new Date(Date.now() - minutesAgo * 60 * 1000);
+            const timeString = timestamp.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false 
+            });
+            
+            // Position tooltip
+            tooltip.style.left = `${e.clientX}px`;
+            tooltip.style.top = `${rect.top - 35}px`;
+            tooltip.innerHTML = `<strong>${timeString}</strong><br>${value.toFixed(1)} L/min`;
+            tooltip.classList.add('visible');
+        } else {
+            tooltip.classList.remove('visible');
+        }
+    });
+    
+    canvas.addEventListener('mouseleave', () => {
+        tooltip.classList.remove('visible');
+    });
+}
+
+// Initialize tooltip on load
+document.addEventListener('DOMContentLoaded', setupWaterflowTooltip);
 
 // ==================== VALVE RENDERING ====================
 

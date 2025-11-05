@@ -23,7 +23,14 @@ class BaseWaterflow():
       self._history.append(0)
 
   def lastLiter_1m(self):
-    if datetime.now() > self._lastupdate + timedelta(0, 60):
+    now = datetime.now()
+    
+    # If no update for more than 60 seconds, flow is 0
+    if now > self._lastupdate + timedelta(0, 60):
+      # Update history with 0 if enough time has passed
+      if now > self._lastHistoryUpdate + timedelta(seconds=60):
+        self._history.append(0.0)
+        self._lastHistoryUpdate = now      
       return 0
 
     return self._lastLiter_1m
@@ -65,7 +72,10 @@ class TestWaterflow(BaseWaterflow):
   def tickerThread(self):
     while True:
       time.sleep(10)
-      self.setLastLiter_1m(random.randint(0, 25))
+      _ = random.randint(0, 50)
+      if _ > 25:
+        _ = 0
+      self.setLastLiter_1m(_)
 
 class MqttWaterflow(BaseWaterflow):
   def __init__(self, logger, config):
