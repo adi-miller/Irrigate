@@ -97,6 +97,9 @@ async function loadStatus() {
         // Update system status
         updateSystemStatus(data.system);
         
+        // Update sensor status
+        updateSensorStatus(data.sensors);
+        
         // Update waterflow status
         updateWaterflowStatus(data.waterflow);
         
@@ -254,6 +257,53 @@ function updateDateTimeInfo(system) {
         }
     } catch (error) {
         console.error('Error updating datetime info:', error);
+    }
+}
+
+function updateSensorStatus(sensors) {
+    const sensorPanel = document.getElementById('sensor-status');
+    const sensorText = document.getElementById('sensor-text');
+    
+    if (!sensorPanel || !sensorText) return;
+    
+    // Check if any sensors have should_disable = true or factor != 1
+    let sensorInfo = [];
+    let shouldDisable = false;
+    
+    if (sensors && sensors.length > 0) {
+        sensors.forEach(sensor => {
+            if (sensor.enabled && !sensor.error) {
+                // Check should_disable
+                if (sensor.should_disable === true) {
+                    shouldDisable = true;
+                    sensorInfo.push(`${sensor.name}: Disabled`);
+                }
+                // Check factor != 1
+                else if (sensor.factor !== undefined && sensor.factor !== null && sensor.factor !== 1) {
+                    sensorInfo.push(`${sensor.name}: ${sensor.factor.toFixed(2)}x`);
+                }
+            }
+        });
+    }
+    
+    // Show panel if we have sensor info to display
+    if (sensorInfo.length > 0) {
+        sensorPanel.style.display = 'flex';
+        
+        // Reset classes
+        sensorPanel.className = 'sensor-status';
+        
+        // Add appropriate class
+        if (shouldDisable) {
+            sensorPanel.classList.add('disabled');
+        } else {
+            sensorPanel.classList.add('factor-adjusted');
+        }
+        
+        // Set text (show first sensor with info)
+        sensorText.textContent = sensorInfo[0];
+    } else {
+        sensorPanel.style.display = 'none';
     }
 }
 
@@ -735,7 +785,7 @@ function getValveStatus(valve) {
 }
 
 function formatTime(seconds) {
-    if (!seconds || seconds <= 0) return '0m';
+    if (!seconds || seconds <= 0) return '0:00';
     
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -1259,33 +1309,6 @@ function renderConfig(config, valves) {
             </div>
         </div>
 
-        ${config.uv_adjustments && config.uv_adjustments.length > 0 ? `
-            <div class="config-section collapsible">
-                <div class="config-section-header" onclick="toggleConfigSection('uv-adjustments')">
-                    <h3>UV Index Adjustments</h3>
-                    <span class="collapse-icon">▶</span>
-                </div>
-                <div class="config-section-content" id="uv-adjustments" style="display: none;">
-                    <table class="config-table">
-                        <thead>
-                            <tr>
-                                <th>Max UV Index</th>
-                                <th>Multiplier</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${config.uv_adjustments.map(adj => `
-                                <tr>
-                                    <td>≤ ${adj.max_uv_index}</td>
-                                    <td>${adj.multiplier}x</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        ` : ''}
-        
         <div class="config-section collapsible">
             <div class="config-section-header" onclick="toggleConfigSection('system-config')">
                 <h3>System Configuration</h3>

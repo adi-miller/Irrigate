@@ -15,17 +15,17 @@
     "idle_interval": 10,
     "active_interval": 1
   },
-  "uv_adjustments": [
-    {"max_uv_index": 2, "multiplier": 0.2},
-    {"max_uv_index": 5, "multiplier": 1.0},
-    {"max_uv_index": 7, "multiplier": 1.5},
-    {"max_uv_index": 10, "multiplier": 2.0}
-  ],
   "sensors": [
     {
       "type": "test",
       "name": "TestSensor1",
-      "enabled": true
+      "enabled": true,
+      "uv_adjustments": [
+        {"max_uv_index": 2, "multiplier": 0.2},
+        {"max_uv_index": 5, "multiplier": 1.0},
+        {"max_uv_index": 7, "multiplier": 1.5},
+        {"max_uv_index": 10, "multiplier": 2.0}
+      ]
     }
   ],
   "waterflow": {

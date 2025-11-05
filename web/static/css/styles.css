@@ -258,6 +258,43 @@ header h1 {
     font-size: 0.85rem;
 }
 
+.sensor-status {
+    display: none; /* Hidden by default, shown only when needed */
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    background: rgba(255, 255, 255, 0.85);
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--radius);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--gray-300);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    height: 32px;
+}
+
+.sensor-status.disabled {
+    background: rgba(255, 152, 0, 0.85);
+    border-color: rgba(255, 152, 0, 0.8);
+    color: white;
+}
+
+.sensor-status.factor-adjusted {
+    background: rgba(103, 58, 183, 0.85);
+    border-color: rgba(103, 58, 183, 0.8);
+    color: white;
+}
+
+.sensor-icon {
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.sensor-text {
+    font-weight: 500;
+    white-space: nowrap;
+    font-size: 0.85rem;
+}
+
 .status-indicator {
     font-size: 1.5rem;
     line-height: 1;
@@ -1170,6 +1207,16 @@ main {
     }
     
     .system-status {
+        font-size: 0.75rem;
+        padding: 0.4rem 0.6rem;
+    }
+
+    .sensor-status {
+        font-size: 0.75rem;
+        padding: 0.4rem 0.6rem;
+    }
+
+    .waterflow-status {
         font-size: 0.75rem;
         padding: 0.4rem 0.6rem;
     }

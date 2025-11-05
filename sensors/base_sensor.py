@@ -8,6 +8,11 @@ class BaseSensor():
     self.uv = 10.2
     self.exception = False
     self.started = False
+    self.uv_adjustments = config.uv_adjustments if hasattr(config, 'uv_adjustments') else []
+
+  def getFactor(self):
+    """Default implementation returns 1.0 (no adjustment)"""
+    return 1.0
 
 class TestSensor(BaseSensor):
   # Can be called multiple times. Make sure to initialize only once
@@ -35,6 +40,21 @@ class TestSensor(BaseSensor):
       raise Exception("Test exception in sensor.getUv()")
 
     return self.uv
+
+  def getFactor(self):
+    """Calculate factor based on UV adjustments configuration"""
+    if self.exception:
+      raise Exception("Test exception in sensor.getFactor()")
+    
+    if not self.uv_adjustments:
+      return 1.0
+    
+    uv = self.uv
+    for adj in self.uv_adjustments:
+      if uv <= adj.max_uv_index:
+        return adj.multiplier
+    
+    return self.uv_adjustments[-1].multiplier
 
   def getTelemetry(self):
     testTelemetry = []

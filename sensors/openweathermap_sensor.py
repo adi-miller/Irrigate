@@ -15,6 +15,7 @@ class OpenWeatherMapSensor(BaseSensor):
     # self.updateInterval = config['updateinterval']
     # self.probabilityThreshold = config['probabilityThreshold']
     self._sendTelemetry = False
+    self.uv_adjustments = config.uv_adjustments if hasattr(config, 'uv_adjustments') else []
 
   def start(self):
     if self.started:
@@ -74,6 +75,18 @@ class OpenWeatherMapSensor(BaseSensor):
 
   def getUv(self):
     return self.uv
+
+  def getFactor(self):
+    """Calculate factor based on current UV index"""
+    uv = self.uv
+    if not self.uv_adjustments:
+      return 1.0
+    
+    for adj in self.uv_adjustments:
+      if uv <= adj.max_uv_index:
+        return adj.multiplier
+    
+    return self.uv_adjustments[-1].multiplier
 
   def getTelemetry(self):
     res = {}

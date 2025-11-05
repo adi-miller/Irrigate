@@ -357,10 +357,6 @@ async def get_config():
         "max_concurrent_valves": cfg.valvesConcurrency,
         "telemetry_enabled": cfg.telemetry,
         "mqtt_enabled": cfg.mqttEnabled,
-        "uv_adjustments": [
-            {"max_uv_index": adj.max_uv_index, "multiplier": adj.multiplier}
-            for adj in cfg.cfg.uv_adjustments
-        ],
         "valve_count": len(irrigate_instance.valves),
         "sensor_count": len(irrigate_instance.sensors)
     }

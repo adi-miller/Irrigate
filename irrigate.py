@@ -262,34 +262,24 @@ class Irrigate:
 
     return season
 
-  def calculateJobDuration(self, valve, sched, uv_override=None):
-    """Calculate job duration with UV adjustments if applicable"""
+  def calculateJobDuration(self, valve, sched):
+    """Calculate job duration with sensor factor if applicable"""
     jobDuration = sched.duration
     
-    if sched.enable_uv_adjustments:
+    if sched.enable_uv_adjustments and hasattr(valve, 'sensor') and valve.sensor:
       try:
-        # Get UV from override or sensor
-        if uv_override is not None:
-          uv = uv_override
-        else:
-          uv = valve.sensor.getUv()
-        
-        factor = self.uv_adjustments(uv)
+        factor = valve.sensor.getFactor()
         if factor != 1:
-          self.logger.info(f"Job duration changed from '{sched.duration}' to '{jobDuration * factor}' based on UV index {uv}.")
+          self.logger.info(f"Job duration adjusted from {sched.duration} to {jobDuration * factor} (factor: {factor}).")
           jobDuration *= factor
         
-        # Only track status when calling real sensor (operational mode)
-        if uv_override is None:
-          self.clearTempStatus("SensorErr")
+        self.clearTempStatus("SensorErr")
           
       except Exception as ex:
-        # Only track status when calling real sensor (operational mode)
-        if uv_override is None:
-          self.setTempStatus("SensorErr")
+        self.setTempStatus("SensorErr")
         
-        self.logger.error("Error calculating UV adjustment '%s': %s." % 
-                        (valve.sensor.type if hasattr(valve, 'sensor') else 'unknown', format(ex)))
+        self.logger.error("Error calculating sensor factor '%s': %s." % 
+                        (valve.sensor.type if hasattr(valve.sensor, 'type') else 'unknown', format(ex)))
     
     return jobDuration
 
@@ -456,13 +446,6 @@ class Irrigate:
       self.setStatus("Terminating")
       self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
       self.terminated = True
-  
-  def uv_adjustments(self, uv):
-    for _ in self.cfg.cfg.uv_adjustments:
-      if uv <= _.max_uv_index:
-        return _.multiplier
-      
-    return self.cfg.cfg.uv_adjustments[-1].multiplier
   
   def setTempStatus(self, tempStatus):
     self._tempStatus[tempStatus] = True

@@ -195,11 +195,10 @@ class ScheduleSimulator:
             if schedule_time < sim_datetime:
               continue  # Skip jobs that were scheduled before the simulation time
           
-          # Calculate duration with UV adjustments (using simulation UV)
+          # Calculate duration with sensor factor adjustments
           base_duration = sched.duration
           if sched.enable_uv_adjustments and hasattr(valve, 'sensor') and valve.sensor:
-            uv = self.get_simulation_uv(valve.sensor)
-            adjusted_duration = self.irrigate.calculateJobDuration(valve, sched, uv_override=uv)
+            adjusted_duration = self.irrigate.calculateJobDuration(valve, sched)
           else:
             adjusted_duration = base_duration
           
