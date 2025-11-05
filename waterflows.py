@@ -17,10 +17,13 @@ class BaseWaterflow():
     self._lastLiter_1m = 0
     self._lastupdate = datetime.now()
     self._lastHistoryUpdate = datetime.now()
-    self._history = deque(maxlen=120)  # Store last 120 minutes of flow data
-    # Initialize with 120 zero values
-    for _ in range(120):
-      self._history.append(0)
+    self._history = deque(maxlen=120)  # Store last 120 minutes of flow data as (timestamp, value) tuples
+    # Initialize with 120 zero values with timestamps going back 120 minutes
+    now = datetime.now()
+    for i in range(120):
+      # Start from 119 minutes ago up to current minute
+      timestamp = now - timedelta(minutes=119-i)
+      self._history.append((timestamp, 0.0))
 
   def lastLiter_1m(self):
     now = datetime.now()
@@ -29,7 +32,7 @@ class BaseWaterflow():
     if now > self._lastupdate + timedelta(0, 60):
       # Update history with 0 if enough time has passed
       if now > self._lastHistoryUpdate + timedelta(seconds=60):
-        self._history.append(0.0)
+        self._history.append((now, 0.0))
         self._lastHistoryUpdate = now      
       return 0
 
@@ -42,12 +45,12 @@ class BaseWaterflow():
     # Only add to history once per minute
     now = datetime.now()
     if now > self._lastHistoryUpdate + timedelta(seconds=60):
-      self._history.append(float(value))
+      self._history.append((now, float(value)))
       self._lastHistoryUpdate = now
   
   def getHistory(self):
-    """Return list of last 120 minutes of flow data"""
-    return list(self._history)
+    """Return list of last 120 minutes of flow data as dicts with timestamp and value"""
+    return [{"timestamp": ts.isoformat(), "value": val} for ts, val in self._history]
 
 class TestWaterflow(BaseWaterflow):
   def __init__(self, logger, config):

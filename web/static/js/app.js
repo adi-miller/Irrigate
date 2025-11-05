@@ -340,7 +340,9 @@ function updateWaterflowChart(waterflow) {
     bgGradient.addColorStop(0.3, '#f5f5f5'); // Almost white at top
     
     // Find max value for scaling (or use 15 as a reasonable max)
-    const maxValue = Math.max(15, ...history);
+    // History now contains objects with {timestamp, value}
+    const values = history.map(item => item.value || 0);
+    const maxValue = Math.max(15, ...values);
     
     // First pass: Draw gradient background bars for all positions
     ctx.fillStyle = bgGradient;
@@ -351,7 +353,8 @@ function updateWaterflowChart(waterflow) {
     
     // Second pass: Draw colored value bars on top
     for (let i = 0; i < barCount; i++) {
-        const value = history[i] !== undefined ? history[i] : 0;
+        const historyItem = history[i];
+        const value = historyItem ? historyItem.value : 0;
         const x = i * barWidth;
         
         if (value > 0) {
@@ -402,23 +405,28 @@ function setupWaterflowTooltip() {
         
         if (barIndex >= 0 && barIndex < barCount) {
             const history = currentWaterflowData.history;
-            const value = history[barIndex] !== undefined ? history[barIndex] : 0;
+            const historyItem = history[barIndex];
             
-            // Calculate the timestamp for this bar
-            // The most recent data is on the right (index 119), oldest on left (index 0)
-            const minutesAgo = barCount - 1 - barIndex;
-            const timestamp = new Date(Date.now() - minutesAgo * 60 * 1000);
-            const timeString = timestamp.toLocaleTimeString('en-US', { 
-                hour: '2-digit', 
-                minute: '2-digit',
-                hour12: false 
-            });
-            
-            // Position tooltip
-            tooltip.style.left = `${e.clientX}px`;
-            tooltip.style.top = `${rect.top - 35}px`;
-            tooltip.innerHTML = `<strong>${timeString}</strong><br>${value.toFixed(1)} L/min`;
-            tooltip.classList.add('visible');
+            if (historyItem) {
+                const value = historyItem.value || 0;
+                // Use the actual timestamp from the server
+                const timestamp = new Date(historyItem.timestamp);
+                const timeString = timestamp.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false 
+                });
+                
+                // Position tooltip to the left of cursor (so it's visible on far right)
+                // Get tooltip width to offset properly
+                tooltip.innerHTML = `<strong>${timeString}</strong><br>${value.toFixed(1)} L/min`;
+                const tooltipWidth = tooltip.offsetWidth || 100; // fallback width
+                tooltip.style.left = `${e.clientX - tooltipWidth - 10}px`; // 10px gap from cursor
+                tooltip.style.top = `${rect.top - 35}px`;
+                tooltip.classList.add('visible');
+            } else {
+                tooltip.classList.remove('visible');
+            }
         } else {
             tooltip.classList.remove('visible');
         }
@@ -734,11 +742,9 @@ function formatTime(seconds) {
     const secs = seconds % 60;
     
     if (hours > 0) {
-        return `${hours}h ${minutes}m`;
-    } else if (minutes > 0) {
-        return `${minutes}m ${secs}s`;
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     } else {
-        return `${secs}s`;
+        return `${minutes}:${secs.toString().padStart(2, '0')}`;
     }
 }
 
