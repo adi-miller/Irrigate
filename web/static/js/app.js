@@ -303,11 +303,12 @@ function updateWaterflowChart(waterflow) {
     if (!historyBar || !canvas) return;
     
     // Only show if waterflow is enabled
-    if (!waterflow || !waterflow.enabled || !waterflow.history || waterflow.history.length === 0) {
+    if (!waterflow || !waterflow.enabled) {
         historyBar.style.display = 'none';
         return;
     }
     
+    // Show the bar even if history is empty or not yet populated
     historyBar.style.display = 'block';
     
     // Setup canvas
@@ -328,30 +329,32 @@ function updateWaterflowChart(waterflow) {
     // Clear canvas
     ctx.clearRect(0, 0, width, height);
     
+    // Create gradient for background bars (light gray to white, bottom to top)
+    const bgGradient = ctx.createLinearGradient(0, height, 0, 0);
+    bgGradient.addColorStop(0, '#d0d0d0'); // Light gray at bottom
+    bgGradient.addColorStop(0.3, '#f5f5f5'); // Almost white at top
+    
     // Find max value for scaling (or use 15 as a reasonable max)
     const maxValue = Math.max(15, ...history);
     
-    // Draw bars from left to right (oldest to newest)
-    // History array order: oldest...newest
+    // First pass: Draw gradient background bars for all positions
+    ctx.fillStyle = bgGradient;
     for (let i = 0; i < barCount; i++) {
-        const value = history[i] || 0;
+        const x = i * barWidth;
+        ctx.fillRect(x, 0, barWidth - 1, height);
+    }
+    
+    // Second pass: Draw colored value bars on top
+    for (let i = 0; i < barCount; i++) {
+        const value = history[i] !== undefined ? history[i] : 0;
         const x = i * barWidth;
         
-        // Color based on value
-        let color;
-        let barHeight;
-        let y;
-        
-        if (value === 0) {
-            // For zero values, draw a 1-pixel gray bar at the bottom
-            color = '#ccccccff';
-            barHeight = 10;
-            y = height - 1;
-        } else {
-            // For non-zero values, scale normally
-            barHeight = (value / maxValue) * height;
-            y = height - barHeight;
+        if (value > 0) {
+            // For non-zero values, draw colored bar from bottom
+            const barHeight = (value / maxValue) * height;
+            const y = height - barHeight;
             
+            let color;
             if (value <= 5) {
                 color = '#81d4fa'; // Light blue
             } else if (value < 10) {
@@ -359,10 +362,10 @@ function updateWaterflowChart(waterflow) {
             } else {
                 color = '#f44336'; // Red
             }
+            
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, barWidth - 1, barHeight);
         }
-        
-        ctx.fillStyle = color;
-        ctx.fillRect(x, y, barWidth - 1, barHeight);
     }
 }
 
