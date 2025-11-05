@@ -157,6 +157,35 @@ async def get_full_status():
     sunset = sun.get_sunset_time(at_date=now_naive, time_zone=tz)
     sunset = sunset.replace(year=now.year, month=now.month, day=now.day)
     
+    # Get waterflow data
+    waterflow_data = {
+        "enabled": False,
+        "type": None,
+        "flow_rate_lpm": 0,
+        "is_active": False,
+        "leak_detection_enabled": False,
+        "last_update": None,
+        "history": []
+    }
+    
+    if irrigate_instance.waterflow:
+        waterflow_data["enabled"] = irrigate_instance.waterflow.enabled
+        waterflow_data["type"] = irrigate_instance.waterflow.type
+        waterflow_data["leak_detection_enabled"] = irrigate_instance.waterflow.leakdetection
+        
+        if irrigate_instance.waterflow.started:
+            flow_rate = irrigate_instance.waterflow.lastLiter_1m()
+            waterflow_data["flow_rate_lpm"] = round(flow_rate, 2)
+            waterflow_data["is_active"] = flow_rate > 0
+            
+            # Get history (last 60 minutes)
+            if hasattr(irrigate_instance.waterflow, 'getHistory'):
+                waterflow_data["history"] = irrigate_instance.waterflow.getHistory()
+            
+            # Get last update time if available
+            if hasattr(irrigate_instance.waterflow, '_lastupdate'):
+                waterflow_data["last_update"] = irrigate_instance.waterflow._lastupdate.isoformat()
+    
     return {
         "system": {
             "status": irrigate_instance._status,
@@ -171,9 +200,7 @@ async def get_full_status():
         },
         "valves": valves,
         "sensors": sensors,
-        "waterflow": {
-            "enabled": irrigate_instance.waterflow.enabled if irrigate_instance.waterflow else False,
-        }
+        "waterflow": waterflow_data
     }
 
 

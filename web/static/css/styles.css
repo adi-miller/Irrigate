@@ -163,6 +163,54 @@ header h1 {
     backdrop-filter: blur(10px);
 }
 
+.waterflow-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    background: rgba(255,255,255,0.15);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.2);
+}
+
+.waterflow-status.active {
+    background: rgba(33, 150, 243, 0.3);
+    border-color: rgba(33, 150, 243, 0.5);
+}
+
+.waterflow-status.leak {
+    background: rgba(244, 67, 54, 0.3);
+    border-color: rgba(244, 67, 54, 0.5);
+    animation: pulse 1s ease-in-out infinite;
+}
+
+.waterflow-icon {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.waterflow-text {
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* Waterflow History Bar */
+.waterflow-history-bar {
+    background: linear-gradient(to bottom, #f5f5f5 0%, #ffffff 100%);
+    border-bottom: 1px solid var(--gray-300);
+    padding: 0;
+    height: 40px;
+    overflow: hidden;
+}
+
+.waterflow-chart {
+    width: 100%;
+    height: 40px;
+    display: block;
+}
+
 .status-indicator {
     font-size: 1.5rem;
     line-height: 1;
@@ -500,6 +548,23 @@ main {
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     padding: 1.5rem;
+    transition: var(--transition);
+}
+
+.sensor-card.sensor-active {
+    border-left: 4px solid var(--info);
+    background: linear-gradient(to right, rgba(33, 150, 243, 0.05) 0%, white 20%);
+}
+
+.sensor-card.sensor-leak {
+    border-left: 4px solid var(--danger);
+    background: linear-gradient(to right, rgba(244, 67, 54, 0.05) 0%, white 20%);
+    animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+    0%, 100% { border-left-width: 4px; }
+    50% { border-left-width: 6px; }
 }
 
 .sensor-header {
@@ -546,6 +611,11 @@ main {
     font-size: 1.5rem;
     font-weight: 600;
     color: var(--gray-900);
+}
+
+.telemetry-value.telemetry-active {
+    color: var(--info);
+    font-weight: 700;
 }
 
 /* ==================== QUEUE VIEW ==================== */

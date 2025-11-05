@@ -3,6 +3,8 @@ import threading
 from datetime import datetime
 from datetime import timedelta
 from paho.mqtt import client
+from collections import deque
+import random
 
 class BaseWaterflow():
   def __init__(self, logger, config):
@@ -14,6 +16,11 @@ class BaseWaterflow():
     self.started = False
     self._lastLiter_1m = 0
     self._lastupdate = datetime.now()
+    self._lastHistoryUpdate = datetime.now()
+    self._history = deque(maxlen=60)  # Store last 60 minutes of flow data
+    # Initialize with 60 zero values
+    for _ in range(60):
+      self._history.append(0.0)
 
   def lastLiter_1m(self):
     if datetime.now() > self._lastupdate + timedelta(0, 60):
@@ -24,6 +31,16 @@ class BaseWaterflow():
   def setLastLiter_1m(self, value):
     self._lastLiter_1m = value
     self._lastupdate = datetime.now()
+    
+    # Only add to history once per minute
+    now = datetime.now()
+    if now > self._lastHistoryUpdate + timedelta(seconds=60):
+      self._history.append(float(value))
+      self._lastHistoryUpdate = now
+  
+  def getHistory(self):
+    """Return list of last 60 minutes of flow data"""
+    return list(self._history)
 
 class TestWaterflow(BaseWaterflow):
   def __init__(self, logger, config):
@@ -48,7 +65,7 @@ class TestWaterflow(BaseWaterflow):
   def tickerThread(self):
     while True:
       time.sleep(10)
-      self._lastLiter_1m = 24
+      self.setLastLiter_1m(random.randint(0, 25))
 
 class MqttWaterflow(BaseWaterflow):
   def __init__(self, logger, config):

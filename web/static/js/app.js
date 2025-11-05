@@ -25,6 +25,13 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Setup simulate form handler (now in config tab)
     setupSimulateForm();
+    
+    // Redraw waterflow chart on window resize
+    window.addEventListener('resize', () => {
+        if (statusData && statusData.waterflow) {
+            updateWaterflowChart(statusData.waterflow);
+        }
+    });
 });
 
 // ==================== TAB SWITCHING ====================
@@ -52,7 +59,7 @@ function switchTab(tabName) {
             loadQueue();
             break;
         case 'sensors':
-            if (statusData) renderSensors(statusData.sensors);
+            if (statusData) renderSensors(statusData.sensors, statusData.waterflow);
             break;
         case 'config':
             loadConfig();
@@ -90,6 +97,9 @@ async function loadStatus() {
         // Update system status
         updateSystemStatus(data.system);
         
+        // Update waterflow status
+        updateWaterflowStatus(data.waterflow);
+        
         // Update current tab content
         if (currentTab === 'valves') {
             // Check if valves grid exists and has content
@@ -102,7 +112,7 @@ async function loadStatus() {
                 renderValves(data.valves, queueData);
             }
         } else if (currentTab === 'sensors') {
-            renderSensors(data.sensors);
+            renderSensors(data.sensors, data.waterflow);
         } else if (currentTab === 'queue') {
             renderQueue(queueData);
         }
@@ -244,6 +254,104 @@ function updateDateTimeInfo(system) {
         }
     } catch (error) {
         console.error('Error updating datetime info:', error);
+    }
+}
+
+function updateWaterflowStatus(waterflow) {
+    const waterflowPanel = document.getElementById('waterflow-status');
+    const waterflowText = document.getElementById('waterflow-text');
+    
+    if (!waterflowPanel || !waterflowText) return;
+    
+    // Only show if waterflow is enabled
+    if (!waterflow || !waterflow.enabled) {
+        waterflowPanel.style.display = 'none';
+        return;
+    }
+    
+    waterflowPanel.style.display = 'flex';
+    
+    // Reset classes
+    waterflowPanel.className = 'waterflow-status';
+    
+    // Check if system is in "Leaking" status
+    const isLeaking = statusData && statusData.system && 
+                      statusData.system.temp_status && 
+                      statusData.system.temp_status.includes('Leaking');
+    
+    if (isLeaking) {
+        // Leak detected!
+        waterflowPanel.classList.add('leak');
+        waterflowText.textContent = `⚠️ LEAK: ${waterflow.flow_rate_lpm} L/min`;
+    } else if (waterflow.is_active && waterflow.flow_rate_lpm > 0) {
+        // Active flow
+        waterflowPanel.classList.add('active');
+        waterflowText.textContent = `${waterflow.flow_rate_lpm} L/min`;
+    } else {
+        // No flow
+        waterflowText.textContent = `${waterflow.flow_rate_lpm} L/min`;
+    }
+    
+    // Update history chart
+    updateWaterflowChart(waterflow);
+}
+
+function updateWaterflowChart(waterflow) {
+    const historyBar = document.getElementById('waterflow-history-bar');
+    const canvas = document.getElementById('waterflow-chart');
+    
+    if (!historyBar || !canvas) return;
+    
+    // Only show if waterflow is enabled
+    if (!waterflow || !waterflow.enabled || !waterflow.history || waterflow.history.length === 0) {
+        historyBar.style.display = 'none';
+        return;
+    }
+    
+    historyBar.style.display = 'block';
+    
+    // Setup canvas
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+    
+    const width = rect.width;
+    const height = rect.height;
+    const history = waterflow.history || [];
+    const barCount = 120;
+    const barWidth = width / barCount;
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height);
+    
+    // Find max value for scaling (or use 15 as a reasonable max)
+    const maxValue = Math.max(15, ...history);
+    
+    // Draw bars from right to left (newest on right)
+    for (let i = 0; i < barCount; i++) {
+        const value = history[i] || 0;
+        const barHeight = (value / maxValue) * height;
+        const x = width - (barCount - i) * barWidth;
+        const y = height - barHeight;
+        
+        // Color based on value
+        let color;
+        if (value === 0) {
+            color = '#e0e0e0'; // Gray for zero/no data
+        } else if (value <= 5) {
+            color = '#81d4fa'; // Light blue
+        } else if (value < 10) {
+            color = '#ff9800'; // Orange
+        } else {
+            color = '#f44336'; // Red
+        }
+        
+        ctx.fillStyle = color;
+        ctx.fillRect(x, y, barWidth - 1, barHeight);
     }
 }
 
@@ -857,7 +965,7 @@ function refreshOpenSchedulePanels() {
 
 // ==================== SENSOR RENDERING ====================
 
-function renderSensors(sensors) {
+function renderSensors(sensors, waterflow = null) {
     const list = document.getElementById('sensors-list');
     if (!list) return;
     
@@ -865,12 +973,66 @@ function renderSensors(sensors) {
     const loading = list.parentElement.querySelector('.loading');
     if (loading) loading.remove();
     
-    if (!sensors || sensors.length === 0) {
-        list.innerHTML = '<p class="text-center">No sensors configured</p>';
-        return;
+    let html = '';
+    
+    // Add waterflow sensor card if enabled
+    if (waterflow && waterflow.enabled) {
+        const isLeaking = statusData && statusData.system && 
+                          statusData.system.temp_status && 
+                          statusData.system.temp_status.includes('Leaking');
+        
+        html += `
+            <div class="sensor-card ${waterflow.is_active ? 'sensor-active' : ''} ${isLeaking ? 'sensor-leak' : ''}">
+                <div class="sensor-header">
+                    <h3 class="sensor-name">💧 Waterflow Sensor</h3>
+                    <span class="sensor-type">${waterflow.type}</span>
+                </div>
+                
+                <div class="sensor-telemetry">
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Flow Rate</div>
+                        <div class="telemetry-value ${waterflow.is_active ? 'telemetry-active' : ''}">
+                            ${waterflow.flow_rate_lpm} L/min
+                        </div>
+                    </div>
+                    
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Status</div>
+                        <div class="telemetry-value">
+                            ${isLeaking ? '⚠️ LEAK DETECTED' : 
+                              waterflow.is_active ? '🟢 Active Flow' : 
+                              '⚪ No Flow'}
+                        </div>
+                    </div>
+                    
+                    <div class="telemetry-item">
+                        <div class="telemetry-label">Leak Detection</div>
+                        <div class="telemetry-value">
+                            ${waterflow.leak_detection_enabled ? '✅ Enabled' : '❌ Disabled'}
+                        </div>
+                    </div>
+                    
+                    ${waterflow.last_update ? `
+                        <div class="telemetry-item">
+                            <div class="telemetry-label">Last Update</div>
+                            <div class="telemetry-value">
+                                ${new Date(waterflow.last_update).toLocaleTimeString()}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
     }
     
-    list.innerHTML = sensors.map(sensor => {
+    // Add regular sensors
+    if (!sensors || sensors.length === 0) {
+        if (!waterflow || !waterflow.enabled) {
+            list.innerHTML = '<p class="text-center">No sensors configured</p>';
+            return;
+        }
+    } else {
+        html += sensors.map(sensor => {
         const telemetry = sensor.telemetry || {};
         const hasError = sensor.error || false;
         
@@ -925,7 +1087,10 @@ function renderSensors(sensors) {
                 `}
             </div>
         `;
-    }).join('');
+        }).join('');
+    }
+    
+    list.innerHTML = html;
 }
 
 // ==================== QUEUE RENDERING ====================

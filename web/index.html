@@ -37,6 +37,10 @@
                             🌙 <span id="sunset-time">--:--</span>
                         </div>
                     </div>
+                    <div id="waterflow-status" class="waterflow-status" style="display: none;">
+                        <span class="waterflow-icon">💧</span>
+                        <span id="waterflow-text" class="waterflow-text">--</span>
+                    </div>
                     <div id="system-status" class="system-status">
                         <span class="status-indicator">●</span>
                         <span class="status-text">Loading...</span>
@@ -44,6 +48,11 @@
                 </div>
             </div>
         </header>
+
+        <!-- Waterflow History Bar -->
+        <div id="waterflow-history-bar" class="waterflow-history-bar" style="display: none;">
+            <canvas id="waterflow-chart" class="waterflow-chart"></canvas>
+        </div>
 
         <!-- Tabs Navigation -->
         <nav class="tabs">
