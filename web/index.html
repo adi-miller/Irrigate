@@ -44,6 +44,10 @@
         <!-- Waterflow History Bar -->
         <div id="waterflow-history-bar" class="waterflow-history-bar" style="display: none;">
             <div class="status-overlay-container">
+                <div id="system-status" class="system-status">
+                    <span class="status-indicator">●</span>
+                    <span class="status-text">Loading...</span>
+                </div>
                 <div id="waterflow-status" class="waterflow-status" style="display: none;">
                     <span class="waterflow-icon">💧</span>
                     <span id="waterflow-text" class="waterflow-text">--</span>
@@ -51,10 +55,6 @@
                 <div id="sensor-status" class="sensor-status" style="display: none;">
                     <span class="sensor-icon">🌡️</span>
                     <span id="sensor-text" class="sensor-text">--</span>
-                </div>
-                <div id="system-status" class="system-status">
-                    <span class="status-indicator">●</span>
-                    <span class="status-text">Loading...</span>
                 </div>
             </div>
             <canvas id="waterflow-chart" class="waterflow-chart"></canvas>

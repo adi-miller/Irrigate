@@ -413,9 +413,9 @@ function updateWaterflowChart(waterflow) {
             const y = height - barHeight;
             
             let color;
-            if (value <= 5) {
+            if (value <= 7) {
                 color = '#81d4fa'; // Light blue
-            } else if (value < 10) {
+            } else if (value < 15) {
                 color = '#ff9800'; // Orange
             } else {
                 color = '#f44336'; // Red
@@ -582,20 +582,22 @@ function renderValves(valves, queueData = null) {
                     `}
                 </div>
                 
-                <div class="valve-actions">
-                    <button class="btn btn-success btn-small" 
-                            onclick="startValveManual('${valve.name}')">
-                        🔓 Open
-                    </button>
+                <div class="valve-actions ${!valve.enabled ? 'valve-disabled' : ''}">
+                    ${valve.is_open ? `
+                        <button class="btn btn-danger btn-small valve-toggle" 
+                                onclick="stopValve('${valve.name}')">
+                            � Close
+                        </button>
+                    ` : `
+                        <button class="btn btn-success btn-small valve-toggle" 
+                                onclick="startValveManual('${valve.name}')">
+                            🔓 Open
+                        </button>
+                    `}
                     
                     <button class="btn btn-secondary btn-small" 
                             onclick="showQueueDialog('${valve.name}')">
                         ⏱️ Queue
-                    </button>
-                    
-                    <button class="btn btn-danger btn-small" 
-                            onclick="stopValve('${valve.name}')">
-                        🔒 Close
                     </button>
                     
                     ${valve.enabled ? `
@@ -734,12 +736,36 @@ function updateValves(valves, queueData = null) {
         }
         
         // Update button states
-        const startBtn = card.querySelector('button[onclick*="startValveManual"]');
-        const stopBtn = card.querySelector('button[onclick*="stopValve"]');
-        const enableBtn = card.querySelector('button[onclick*="enableValve"]');
-        const disableBtn = card.querySelector('button[onclick*="disableValve"]');
+        const valveActions = card.querySelector('.valve-actions');
+        if (!valveActions) return;
         
-        // Open and Close buttons are always enabled since valve state may not be accurate
+        // Update disabled class on valve-actions
+        if (valve.enabled) {
+            valveActions.classList.remove('valve-disabled');
+        } else {
+            valveActions.classList.add('valve-disabled');
+        }
+        
+        const toggleBtn = valveActions.querySelector('.valve-toggle');
+        const enableBtn = valveActions.querySelector('button[onclick*="enableValve"]');
+        const disableBtn = valveActions.querySelector('button[onclick*="disableValve"]');
+        
+        // Update toggle button based on valve.is_open state
+        if (toggleBtn) {
+            if (valve.is_open) {
+                // Valve is open - show Close button
+                toggleBtn.outerHTML = `<button class="btn btn-danger btn-small valve-toggle" 
+                        onclick="stopValve('${valve.name}')">
+                    🔒 Close
+                </button>`;
+            } else {
+                // Valve is closed - show Open button
+                toggleBtn.outerHTML = `<button class="btn btn-success btn-small valve-toggle" 
+                        onclick="startValveManual('${valve.name}')">
+                    🔓 Open
+                </button>`;
+            }
+        }
         
         // Handle enable/disable button toggle
         if (valve.enabled && enableBtn) {
