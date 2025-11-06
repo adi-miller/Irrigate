@@ -369,6 +369,7 @@ async def start_valve_manual(valve_name: str, duration_minutes: float = 5):
         raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
     
     valve = irrigate_instance.valves[valve_name]
+    valve.is_open = True  # Track state
     valve.open()
     irrigate_instance.logger.info(f"Manual start: Valve '{valve_name}' opened manually")
     
@@ -411,6 +412,7 @@ async def stop_valve(valve_name: str):
         raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
     
     valve = irrigate_instance.valves[valve_name]
+    valve.is_open = False  # Track state (job will detect and terminate)
     valve.close()
     irrigate_instance.logger.info(f"Manual stop: Valve '{valve_name}' closed")
     

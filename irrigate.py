@@ -97,6 +97,14 @@ class Irrigate:
 
   def exit_gracefully(self, *args):
     self.terminated = True
+    
+    # Close all manually opened valves (is_open but not handled by a job)
+    for valve in self.valves.values():
+      if valve.is_open and not valve.handled:
+        valve.is_open = False
+        valve.close()
+        self.logger.info(f"Closed manually opened valve '{valve.name}' on shutdown")
+    
     # Gracefully shutdown MQTT connections
     if self.mqtt:
       self.mqtt.shutdown()
@@ -322,11 +330,25 @@ class Irrigate:
               except Exception as ex:
                 self.setTempStatus("SensorErr")
                 self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.name, format(ex)))
+            
+            # Detect manual close during job - valve closed but we still have openSince
+            # Check this BEFORE trying to open to prevent re-opening after manual close
+            if not valve.is_open and openSince is not None and not sensorDisabled:
+              valve.secondsLast = (datetime.now() - openSince).seconds
+              valve.secondsDaily = initialOpen + valve.secondsLast
+              self.logger.info("Irrigation valve '%s' manually closed. Terminating job. Open time %s seconds." 
+                              % (valve.name, valve.secondsLast))
+              break
+            
             if not valve.is_open and not sensorDisabled:
               valve.is_open = True
               openSince = datetime.now()
               valve.open()
               self.logger.info("Irrigation valve '%s' opened." % (valve.name))
+            elif valve.is_open and openSince is None:
+              # Valve already open (manually or previous job) - inherit it
+              openSince = datetime.now()
+              self.logger.info("Irrigation valve '%s' already open, job inheriting." % (valve.name))
 
             if valve.is_open and sensorDisabled:
               valve.is_open = False
@@ -337,9 +359,11 @@ class Irrigate:
               valve.secondsLast = 0
               valve.close()
               self.logger.info("Irrigation valve '%s' closed due to sensor." % (valve.name))
+            
             if valve.is_open:
-              valve.secondsLast = (datetime.now() - openSince).seconds
-              valve.secondsDaily = initialOpen + valve.secondsLast
+              if openSince is not None:
+                valve.secondsLast = (datetime.now() - openSince).seconds
+                valve.secondsDaily = initialOpen + valve.secondsLast
             if not valve.enabled:
               self.logger.info("Valve '%s' disabled. Terminating irrigation cycle." % (valve.name))
               break
