@@ -33,41 +33,8 @@ def test_sh_initAllNoRuns():
   assertValves(cfg.valves, ["Test1", "Test2", "Test3"], [(False, False), (False, False), (False, False)])
   assert len(q.queue) == 0
 
-def test_suspendInTheMiddle():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, valve_name = "Test1")
-  cfg.valves["Test2"].schedules.clear()
-  cfg.valves["Test3"].schedules.clear()
-  valves = cfg.valves
-  assertValves(valves, ["Test1", "Test2", "Test3"], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ["Test1", "Test2", "Test3"], [(True, True), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  valves['Test1'].suspended = True
-  time.sleep(7)
-  valves['Test1'].suspended = False
-  time.sleep(3)
-  assert valves['Test1'].secondsDaily < 8
-  assert len(q.queue) == 0
-
-def test_suspendedFromStart():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, valve_name = "Test1")
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  valves = cfg.valves
-  assertValves(valves, ["Test1", "Test2", "Test3"], [(False, False), (False, False), (False, False)])
-  valves['Test1'].suspended = True
-  assert len(q.queue) == 0
-  irrigate.start()
-  time.sleep(5)
-  assertValves(valves, ["Test1", "Test2", "Test3"], [(True, False), (False, False), (False, False)])
-  valves['Test1'].suspended = False
-  time.sleep(3)
-  assertValves(valves, ["Test1", "Test2", "Test3"], [(True, True), (False, False), (False, False)])
-  assert valves['Test1'].secondsDaily < 4
+# Tests removed: test_suspendInTheMiddle and test_suspendedFromStart
+# Suspend functionality has been removed from the system
 
 # def test_sunset():
 #   irrigate, logger, cfg, valves, q = init("test_config.json")

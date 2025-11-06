@@ -111,7 +111,6 @@ async def get_full_status():
         valves.append({
             "name": name,
             "enabled": v.enabled,
-            "suspended": v.suspended,
             "is_open": v.is_open,
             "handled": v.handled,
             "seconds_daily": v.secondsDaily,
@@ -215,7 +214,6 @@ async def get_valves():
         valves.append({
             "name": name,
             "enabled": v.enabled,
-            "suspended": v.suspended,
             "is_open": v.is_open,
             "seconds_remain": v.secondsRemain,
         })
@@ -252,7 +250,6 @@ async def get_valve_details(valve_name: str):
         "name": v.name,
         "type": v.config.type,
         "enabled": v.enabled,
-        "suspended": v.suspended,
         "is_open": v.is_open,
         "handled": v.handled,
         "sensor_name": v.sensor.config.name if hasattr(v, 'sensor') else None,
@@ -466,42 +463,6 @@ async def disable_valve(valve_name: str):
     invalidate_next_runs_cache()
     
     return {"success": True, "valve": valve_name, "action": "disabled"}
-
-
-@app.post("/api/valves/{valve_name}/suspend")
-async def suspend_valve(valve_name: str):
-    """Suspend valve"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    valve.suspended = True
-    irrigate_instance.logger.info(f"Valve '{valve_name}' suspended")
-    
-    invalidate_next_runs_cache()
-    
-    return {"success": True, "valve": valve_name, "action": "suspended"}
-
-
-@app.post("/api/valves/{valve_name}/resume")
-async def resume_valve(valve_name: str):
-    """Resume valve"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    valve.suspended = False
-    irrigate_instance.logger.info(f"Valve '{valve_name}' resumed")
-    
-    invalidate_next_runs_cache()
-    
-    return {"success": True, "valve": valve_name, "action": "resumed"}
 
 
 @app.put("/api/valves/{valve_name}/schedules/{schedule_index}")

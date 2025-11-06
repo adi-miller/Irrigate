@@ -450,11 +450,6 @@ main {
     color: #c62828;
 }
 
-.valve-status-badge.suspended {
-    background: #fff3e0;
-    color: #e65100;
-}
-
 .valve-status-badge.malfunction {
     background: #ffebee;
     color: #b71c1c;

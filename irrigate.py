@@ -317,18 +317,18 @@ class Irrigate:
                 holdSensorDisabled = irrigateJob.sensor.shouldDisable()
                 if holdSensorDisabled != sensorDisabled:
                   sensorDisabled = holdSensorDisabled
-                  self.logger.info("Suspend set to '%s' for valve '%s' from sensor" % (sensorDisabled, valve.name))
+                  self.logger.info("Sensor disable set to '%s' for valve '%s'" % (sensorDisabled, valve.name))
                 self.clearTempStatus("SensorErr")
               except Exception as ex:
                 self.setTempStatus("SensorErr")
                 self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.name, format(ex)))
-            if not valve.is_open and not valve.suspended and not sensorDisabled:
+            if not valve.is_open and not sensorDisabled:
               valve.is_open = True
               openSince = datetime.now()
               valve.open()
               self.logger.info("Irrigation valve '%s' opened." % (valve.name))
 
-            if valve.is_open and (valve.suspended or sensorDisabled):
+            if valve.is_open and sensorDisabled:
               valve.is_open = False
               valve.secondsLast = (datetime.now() - openSince).seconds
               openSince = None
@@ -336,7 +336,7 @@ class Irrigate:
               initialOpen = valve.secondsDaily
               valve.secondsLast = 0
               valve.close()
-              self.logger.info("Irrigation valve '%s' closed." % (valve.name))
+              self.logger.info("Irrigation valve '%s' closed due to sensor." % (valve.name))
             if valve.is_open:
               valve.secondsLast = (datetime.now() - openSince).seconds
               valve.secondsDaily = initialOpen + valve.secondsLast
@@ -357,7 +357,7 @@ class Irrigate:
               valve.litersLast = valve.litersLast + _lastLiter_1m
 
           self.logger.info("Irrigation cycle ended for valve '%s'." % (valve.name))
-          if valve.is_open and not valve.suspended:
+          if valve.is_open:
             valve.secondsLast = (datetime.now() - openSince).seconds
             valve.secondsDaily = initialOpen + valve.secondsLast
           if valve.is_open:
@@ -484,8 +484,6 @@ class Irrigate:
     statusStr = "enabled"
     if not valve.enabled:
       statusStr = "disabled"
-    elif valve.suspended:
-      statusStr = "suspended"
     elif valve.is_open:
       statusStr = "open"
 

@@ -67,7 +67,6 @@ class Mqtt:
       self.mqttStarted = True
       # Re-register all subscriptions on every connect/reconnect
       self.registerTopics(self.topicPrefix, "queue")
-      self.registerTopics(self.topicPrefix, "suspend")
       self.registerTopics(self.topicPrefix, "enabled")
       self.registerTopics(self.topicPrefix, "forceopen")
       self.registerTopics(self.topicPrefix, "forceclose")
@@ -134,16 +133,6 @@ class Mqtt:
         return
 
       try:
-        if topicParts[1] == "suspend":
-          if int(payload) == 0:
-            valves[valveName].suspended = False
-            self.logger.info("Un-suspended valve '%s' via MQTT command" % valveName)
-            return
-          elif int(payload) == 1:
-            valves[valveName].suspended = True
-            self.logger.info("Suspended valve '%s' via MQTT command" % valveName)
-            return
-
         if topicParts[1] == "enabled":
           if int(payload) == 0:
             valves[valveName].enabled = False

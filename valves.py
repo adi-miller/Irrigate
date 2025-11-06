@@ -9,7 +9,6 @@ class BaseValve():
     self.enabled = config.enabled
     self.handled = False
     self.is_open = False
-    self.suspended = False
     self.secondsDaily = 0
     self.litersDaily = 0
     self.secondsRemain = 0

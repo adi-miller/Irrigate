@@ -537,7 +537,6 @@ function renderValves(valves, queueData = null) {
         
         const timeRemaining = formatTime(valve.seconds_remain);
         // Progress = remaining time / original job duration
-        // This correctly accounts for suspension since seconds_remain doesn't decrease when suspended
         const progress = valve.seconds_duration > 0 ? 
             (valve.seconds_remain / valve.seconds_duration * 100) : 0;
         
@@ -577,7 +576,7 @@ function renderValves(valves, queueData = null) {
                         <div class="valve-info-row next-run-row">
                             <span class="valve-info-label">Next Run:</span>
                             <span class="valve-info-value next-run-none">
-                                ${!valve.enabled ? 'Disabled' : (valve.suspended ? 'Suspended' : 'None in 7 days')}
+                                ${!valve.enabled ? 'Disabled' : 'None in 7 days'}
                             </span>
                         </div>
                     `}
@@ -606,16 +605,6 @@ function renderValves(valves, queueData = null) {
                     ` : `
                         <button class="btn btn-success btn-small" onclick="enableValve('${valve.name}')">
                             ✅ Enable
-                        </button>
-                    `}
-                    
-                    ${valve.suspended ? `
-                        <button class="btn btn-primary btn-small" onclick="resumeValve('${valve.name}')">
-                            ▶️ Resume
-                        </button>
-                    ` : `
-                        <button class="btn btn-warning btn-small" onclick="suspendValve('${valve.name}')">
-                            ⏸️ Suspend
                         </button>
                     `}
                     
@@ -739,7 +728,7 @@ function updateValves(valves, queueData = null) {
                     nextRunValue.textContent = `📅 ${nextRunFormatted}`;
                 } else {
                     nextRunValue.className = 'valve-info-value next-run-none';
-                    nextRunValue.textContent = !valve.enabled ? 'Disabled' : (valve.suspended ? 'Suspended' : 'None in 7 days');
+                    nextRunValue.textContent = !valve.enabled ? 'Disabled' : 'None in 7 days';
                 }
             }
         }
@@ -749,8 +738,6 @@ function updateValves(valves, queueData = null) {
         const stopBtn = card.querySelector('button[onclick*="stopValve"]');
         const enableBtn = card.querySelector('button[onclick*="enableValve"]');
         const disableBtn = card.querySelector('button[onclick*="disableValve"]');
-        const suspendBtn = card.querySelector('button[onclick*="suspendValve"]');
-        const resumeBtn = card.querySelector('button[onclick*="resumeValve"]');
         
         // Open and Close buttons are always enabled since valve state may not be accurate
         
@@ -760,19 +747,11 @@ function updateValves(valves, queueData = null) {
         } else if (!valve.enabled && disableBtn) {
             disableBtn.outerHTML = `<button class="btn btn-success btn-small" onclick="enableValve('${valve.name}')">✅ Enable</button>`;
         }
-        
-        // Handle suspend/resume button toggle
-        if (valve.suspended && suspendBtn) {
-            suspendBtn.outerHTML = `<button class="btn btn-primary btn-small" onclick="resumeValve('${valve.name}')">▶️ Resume</button>`;
-        } else if (!valve.suspended && resumeBtn) {
-            resumeBtn.outerHTML = `<button class="btn btn-warning btn-small" onclick="suspendValve('${valve.name}')">⏸️ Suspend</button>`;
-        }
     });
 }
 
 function getValveStatus(valve) {
     if (!valve.enabled) return 'Disabled';
-    if (valve.suspended) return 'Suspended';
     if (valve.is_open) {
         // If valve is running, include time remaining
         if (valve.handled && valve.seconds_remain > 0) {
@@ -900,28 +879,6 @@ async function disableValve(name) {
         loadNextRuns();  // Refresh next runs since schedule availability changed
     } catch (error) {
         console.error('Failed to disable valve:', error);
-    }
-}
-
-async function suspendValve(name) {
-    try {
-        await apiCall(`/api/valves/${name}/suspend`, { method: 'POST' });
-        showToast(`Valve ${name} suspended`, 'warning');
-        loadStatus();
-        loadNextRuns();  // Refresh next runs since schedule availability changed
-    } catch (error) {
-        console.error('Failed to suspend valve:', error);
-    }
-}
-
-async function resumeValve(name) {
-    try {
-        await apiCall(`/api/valves/${name}/resume`, { method: 'POST' });
-        showToast(`Valve ${name} resumed`, 'success');
-        loadStatus();
-        loadNextRuns();  // Refresh next runs since schedule availability changed
-    } catch (error) {
-        console.error('Failed to resume valve:', error);
     }
 }
 
