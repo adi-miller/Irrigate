@@ -19,6 +19,11 @@ class BaseValve():
       if not hasattr(schedule, "seasons"):
         schedule.seasons = []
     self.waterflow = None
+    # Baseline metrics (populated by valve_metrics.load_baselines)
+    self.baseline_lpm = None
+    self.baseline_trend = None
+    self.baseline_std_dev = None
+    self.baseline_sample_count = 0
     
   def open(self):
     self.logger.info("Opening valve")

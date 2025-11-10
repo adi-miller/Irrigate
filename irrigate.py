@@ -15,8 +15,9 @@ from suntime import Sun
 from datetime import datetime
 from datetime import timedelta
 from threading import Thread
-from schedule_simulator import ScheduleSimulator
 from api_server import run_api_server
+from valve_metrics import write_daily_summaries, load_baselines
+from schedule_simulator import ScheduleSimulator
 
 def main(argv):
   # Check for --simulate flag (with or without =)
@@ -154,6 +155,10 @@ class Irrigate:
     self.waterflow = self.cfg.waterflow
     # self.waterflows = self.cfg.waterflows
     self.q = queue.Queue()
+    
+    # Load valve baselines from historical data
+    from valve_metrics import load_baselines
+    load_baselines(self.valves, self.logger)
 
   def createThreads(self):
     self.workers = []
@@ -424,9 +429,17 @@ class Irrigate:
         now = tz.localize(datetime.now().replace(second=0, microsecond=0))
 
         if now.hour == 0 and now.minute == 0:
+          # Write yesterday's daily summaries before resetting
+          yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+          write_daily_summaries(self.valves, yesterday, self.logger)
+          
+          # Reset daily counters
           for aValve in self.valves.values():
             aValve.secondsDaily = 0
             aValve.litersDaily = 0
+          
+          # Reload baselines with updated data
+          load_baselines(self.valves, self.logger)
 
         if self.cfg.telemetry and self.everyXMinutes("idleInterval", self.cfg.telemIdleInterval, False):
           delta = (datetime.now() - self.startTime)
