@@ -100,6 +100,9 @@ async function loadStatus() {
         // Update sensor status
         updateSensorStatus(data.sensors);
         
+        // Update weather info
+        updateWeatherInfo(data.sensors);
+        
         // Update waterflow status
         updateWaterflowStatus(data.waterflow);
         
@@ -304,6 +307,64 @@ function updateSensorStatus(sensors) {
         sensorText.textContent = sensorInfo[0];
     } else {
         sensorPanel.style.display = 'none';
+    }
+}
+
+function updateWeatherInfo(sensors) {
+    const uvElement = document.getElementById('uv-index');
+    const uvIconElement = document.getElementById('uv-icon');
+    const precipElement = document.getElementById('recent-precip');
+    
+    if (!uvElement || !precipElement || !uvIconElement) return;
+    
+    // Find OpenWeatherMap sensor and extract telemetry
+    const weatherSensor = sensors.find(s => 
+        s.type === 'OpenWeatherMap' && s.enabled && s.telemetry
+    );
+    
+    if (weatherSensor && weatherSensor.telemetry) {
+        // Update UV index with color coding and icon
+        if (weatherSensor.telemetry.uv !== undefined) {
+            const uvValue = weatherSensor.telemetry.uv;
+            uvElement.textContent = Math.round(uvValue);
+            
+            // Remove all UV color classes
+            uvElement.className = 'uv-badge';
+            
+            // Add color class and icon based on UV value
+            if (uvValue < 3) {
+                uvElement.classList.add('uv-low');
+                uvIconElement.textContent = '🌤️';
+            } else if (uvValue < 6) {
+                uvElement.classList.add('uv-moderate');
+                uvIconElement.textContent = '🌞';
+            } else if (uvValue < 8) {
+                uvElement.classList.add('uv-high');
+                uvIconElement.textContent = '☀️';
+            } else if (uvValue < 11) {
+                uvElement.classList.add('uv-very-high');
+                uvIconElement.textContent = '🔆';
+            } else {
+                uvElement.classList.add('uv-extreme');
+                uvIconElement.textContent = '🔅';
+            }
+        } else {
+            uvElement.textContent = '--';
+            uvElement.className = 'uv-badge';
+            uvIconElement.textContent = '☀️';
+        }
+        
+        // Update recent precipitation
+        if (weatherSensor.telemetry.recentPrecip !== undefined) {
+            precipElement.textContent = weatherSensor.telemetry.recentPrecip.toFixed(1);
+        } else {
+            precipElement.textContent = '--';
+        }
+    } else {
+        uvElement.textContent = '--';
+        uvElement.className = 'uv-badge';
+        uvIconElement.textContent = '☀️';
+        precipElement.textContent = '--';
     }
 }
 

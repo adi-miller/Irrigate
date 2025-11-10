@@ -133,7 +133,7 @@ async def get_full_status():
         try:
             sensor_data["should_disable"] = s.shouldDisable() if hasattr(s, 'shouldDisable') else False
             sensor_data["factor"] = s.getFactor() if hasattr(s, 'getFactor') else 1.0
-            sensor_data["telemetry"] = s.getTelemetry() if hasattr(s, 'getTelemetry') else {}
+            sensor_data["telemetry"] = s.getTelemetry(True) if hasattr(s, 'getTelemetry') else {}
         except Exception:
             sensor_data["should_disable"] = None
             sensor_data["factor"] = None

@@ -9,6 +9,7 @@ from sensors.base_sensor import BaseSensor
 class OpenWeatherMapSensor(BaseSensor):
   def __init__(self, logger, config):
     BaseSensor.__init__(self, logger, config)
+    self.type = 'OpenWeatherMap'
     self.apiKey = config.api_key
     self.lat = config.latitude
     self.lon = config.longitude
@@ -88,9 +89,9 @@ class OpenWeatherMapSensor(BaseSensor):
     
     return self.uv_adjustments[-1].multiplier
 
-  def getTelemetry(self):
+  def getTelemetry(self, forced = False):
     res = {}
-    if self._sendTelemetry:
+    if self._sendTelemetry or forced:
       res["uv"] = self.uv
       res["recentPrecip"] = self.recentPrecip
       self._sendTelemetry = False

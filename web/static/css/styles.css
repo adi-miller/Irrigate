@@ -141,6 +141,26 @@ header h1 {
     backdrop-filter: blur(10px);
 }
 
+.combined-info {
+    flex-direction: row;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+.info-left {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+}
+
+.info-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+}
+
 .sun-time-line {
     font-size: 0.85rem;
     opacity: 0.9;
@@ -150,6 +170,44 @@ header h1 {
 
 .sun-time {
     white-space: nowrap;
+}
+
+.weather-line {
+    font-size: 0.85rem;
+    opacity: 0.9;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.uv-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: bold;
+    color: white;
+    background: var(--gray-500);
+    min-width: 24px;
+    text-align: center;
+}
+
+.uv-low {
+    background: #4CAF50;
+}
+
+.uv-moderate {
+    background: #FDD835;
+}
+
+.uv-high {
+    background: #FF9800;
+}
+
+.uv-very-high {
+    background: #F44336;
+}
+
+.uv-extreme {
+    background: #9C27B0;
 }
 
 /* Waterflow History Bar */
