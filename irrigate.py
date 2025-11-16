@@ -18,6 +18,7 @@ from threading import Thread
 from api_server import run_api_server
 from valve_metrics import write_daily_summaries, load_baselines
 from schedule_simulator import ScheduleSimulator
+from alerts import AlertManager, AlertType
 
 def main(argv):
   # Check for --simulate flag (with or without =)
@@ -87,17 +88,22 @@ class Irrigate:
     self.startTime = datetime.now()
     self.logger = self.getLogger()
     self.logger.info("Reading configuration file '%s'..." % configFilename)
-    self.init(configFilename)
     self.terminated = False
     self._lastAllClosed = None
-    self.mqtt = Mqtt(self)
-    self.createThreads()
     self._intervalDict = {}
     self._status = None
     self._tempStatus = {}
+    self.alerts = None  # Will be initialized in init()
+    self.init(configFilename)
+    self.mqtt = Mqtt(self)
+    self.createThreads()
 
   def exit_gracefully(self, *args):
     self.terminated = True
+    
+    # Alert system exit
+    if self.alerts:
+      self.alerts.alert(AlertType.SYSTEM_EXIT, "Graceful shutdown (SIGTERM)")
     
     # Close all manually opened valves (is_open but not handled by a job)
     for valve in self.valves.values():
@@ -159,6 +165,9 @@ class Irrigate:
     # Load valve baselines from historical data
     from valve_metrics import load_baselines
     load_baselines(self.valves, self.logger)
+    
+    # Initialize alert manager (pass self for schedule evaluation reuse)
+    self.alerts = AlertManager(self.logger, self.cfg, self)
 
   def createThreads(self):
     self.workers = []
@@ -275,6 +284,55 @@ class Irrigate:
 
     return season
 
+  def checkIrregularFlow(self, valve, total_seconds, total_liters):
+    """Check if flow rate is off baseline at end of valve cycle"""
+    # Need baseline data
+    if valve.baseline_lpm is None or valve.baseline_std_dev is None:
+      return
+    
+    if total_seconds <= 0:
+      return
+    
+    # Calculate actual flow rate
+    actual_lpm = (total_liters / total_seconds) * 60
+    
+    # Get threshold (default from config or per-valve override)
+    threshold = 2.0  # Default std deviations
+    if hasattr(self.cfg.cfg, 'alerts'):
+      if hasattr(self.cfg.cfg.alerts, 'irregular_flow_threshold'):
+        threshold = self.cfg.cfg.alerts.irregular_flow_threshold
+      
+      # Check for valve-specific override
+      if hasattr(self.cfg.cfg.alerts, 'valve_overrides'):
+        if hasattr(self.cfg.cfg.alerts.valve_overrides, valve.name):
+          valve_override = getattr(self.cfg.cfg.alerts.valve_overrides, valve.name)
+          if hasattr(valve_override, 'irregular_flow_threshold'):
+            threshold = valve_override.irregular_flow_threshold
+    
+    # Calculate acceptable range
+    lower_bound = valve.baseline_lpm - (valve.baseline_std_dev * threshold)
+    upper_bound = valve.baseline_lpm + (valve.baseline_std_dev * threshold)
+    
+    # Check if outside range
+    if actual_lpm < lower_bound or actual_lpm > upper_bound:
+      deviation_pct = ((actual_lpm - valve.baseline_lpm) / valve.baseline_lpm) * 100
+      direction = "above" if actual_lpm > valve.baseline_lpm else "below"
+      
+      self.alerts.alert(
+        AlertType.IRREGULAR_FLOW,
+        f"Valve '{valve.name}' flow rate {direction} baseline: {actual_lpm:.2f} L/min vs baseline {valve.baseline_lpm:.2f} L/min ({deviation_pct:+.1f}%)",
+        valve_name=valve.name,
+        data={
+          "actual_lpm": round(actual_lpm, 2),
+          "baseline_lpm": valve.baseline_lpm,
+          "baseline_std_dev": valve.baseline_std_dev,
+          "threshold_std_devs": threshold,
+          "deviation_percent": round(deviation_pct, 2),
+          "total_seconds": total_seconds,
+          "total_liters": round(total_liters, 2)
+        }
+      )
+
   def calculateJobDuration(self, valve, sched):
     """Calculate job duration with sensor factor if applicable"""
     jobDuration = sched.duration
@@ -287,12 +345,19 @@ class Irrigate:
           jobDuration *= factor
         
         self.clearTempStatus("SensorErr")
+        if self.alerts:
+          self.alerts.clear_alert_state(AlertType.SENSOR_ERROR, valve.sensor.name)
           
       except Exception as ex:
         self.setTempStatus("SensorErr")
-        
-        self.logger.error("Error calculating sensor factor '%s': %s." % 
-                        (valve.sensor.type if hasattr(valve.sensor, 'type') else 'unknown', format(ex)))
+        error_msg = format(ex)
+        self.logger.error("Error calculating sensor factor '%s': %s." % (valve.sensor.name, error_msg))
+        if self.alerts:
+          self.alerts.alert(
+            AlertType.SENSOR_ERROR,
+            f"Sensor '{valve.sensor.name}' error: {error_msg}",
+            data={"sensor_name": valve.sensor.name, "error": error_msg}
+          )
     
     return jobDuration
 
@@ -332,9 +397,16 @@ class Irrigate:
                   sensorDisabled = holdSensorDisabled
                   self.logger.info("Sensor disable set to '%s' for valve '%s'" % (sensorDisabled, valve.name))
                 self.clearTempStatus("SensorErr")
+                self.alerts.clear_alert_state(AlertType.SENSOR_ERROR, irrigateJob.sensor.name)
               except Exception as ex:
                 self.setTempStatus("SensorErr")
-                self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.name, format(ex)))
+                error_msg = format(ex)
+                self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.name, error_msg))
+                self.alerts.alert(
+                  AlertType.SENSOR_ERROR,
+                  f"Sensor '{irrigateJob.sensor.name}' error: {error_msg}",
+                  data={"sensor_name": irrigateJob.sensor.name, "error": error_msg}
+                )
             
             # Detect manual close during job - valve closed but we still have openSince
             # Check this BEFORE trying to open to prevent re-opening after manual close
@@ -384,6 +456,15 @@ class Irrigate:
               _lastLiter_1m = valve.waterflow.lastLiter_1m()
               valve.litersDaily = valve.litersDaily + _lastLiter_1m
               valve.litersLast = valve.litersLast + _lastLiter_1m
+              
+              # Check for malfunction (no flow after 60 seconds)
+              if valve.is_open and valve.secondsLast >= 60 and valve.litersLast == 0:
+                self.alerts.alert(
+                  AlertType.MALFUNCTION_NO_FLOW,
+                  f"Valve '{valve.name}' open for {valve.secondsLast}s but no water flow detected",
+                  valve_name=valve.name,
+                  data={"seconds_open": valve.secondsLast, "liters_detected": valve.litersLast}
+                )
 
           self.logger.info("Irrigation cycle ended for valve '%s'." % (valve.name))
           if valve.is_open:
@@ -394,6 +475,13 @@ class Irrigate:
             valve.close()
             self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.secondsDaily))
           
+          # Check for irregular flow at cycle end
+          if valve.waterflow and valve.waterflow.started and valve.secondsLast > 0:
+            self.checkIrregularFlow(valve, valve.secondsLast, valve.litersLast)
+          
+          # Clear malfunction state for next run
+          self.alerts.clear_alert_state(AlertType.MALFUNCTION_NO_FLOW, valve.name)
+          
           # Unlink waterflow sensor from valve
           valve.waterflow = None
           
@@ -402,7 +490,7 @@ class Irrigate:
         self.q.task_done()
       except queue.Empty:
         pass
-    self.logger.warning("Valve handler thread '%s' exited." % threading.currentThread().name)
+    self.logger.warning("Valve handler thread '%s' exited." % threading.current_thread().name)
 
   def queueJob(self, job):
     self.q.put(job)
@@ -460,10 +548,28 @@ class Irrigate:
 
         if self.everyXMinutes("checkLeakInterval", 1, False):
           if self.waterflow is not None and self.waterflow.started and self.waterflow.leakdetection:
-            if self.allValvesClosed():
-              if self.waterflow.lastLiter_1m() > 0:
-                self.setTempStatus("Leaking")
+            all_closed = self.allValvesClosed()
+            # Check for leak (unless in exclusion window)
+            if all_closed:
+              tz = pytz.timezone(self.cfg.timezone)
+              now_tz = tz.localize(datetime.now())
+              
+              if not self.alerts.is_in_exclusion_window(now_tz):
+                flow_rate = self.waterflow.lastLiter_1m()
+                if flow_rate > 0:
+                  self.alerts.alert(
+                    AlertType.LEAK,
+                    f"Leak detected: {flow_rate:.2f} L/min flow with all valves closed",
+                    data={"flow_rate_lpm": flow_rate}
+                  )
+                  self.setTempStatus("Leaking")
+                else:
+                  # Leak resolved
+                  self.alerts.clear_alert_state(AlertType.LEAK)
+                  self.clearTempStatus("Leaking")
               else:
+                # In exclusion window - clear any existing leak state
+                self.alerts.clear_alert_state(AlertType.LEAK)
                 self.clearTempStatus("Leaking")
 
         if self.everyXMinutes("scheduler", 1, True):
