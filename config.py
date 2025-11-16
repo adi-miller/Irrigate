@@ -139,6 +139,26 @@ class Config:
             valve_cfg['schedules'] = new_schedules
             break
       
+      # Update alerts configuration if it exists
+      if hasattr(self.cfg, 'alerts') and 'alerts' in config_data:
+        alerts_cfg = self.cfg.alerts
+        
+        # Update enabled flags
+        if hasattr(alerts_cfg, 'enabled') and 'enabled' in config_data['alerts']:
+          config_data['alerts']['enabled'] = {
+            'leak': alerts_cfg.enabled.leak,
+            'malfunction_no_flow': alerts_cfg.enabled.malfunction_no_flow,
+            'irregular_flow': alerts_cfg.enabled.irregular_flow,
+            'sensor_error': alerts_cfg.enabled.sensor_error,
+            'system_exit': alerts_cfg.enabled.system_exit,
+          }
+        
+        # Update settings
+        if hasattr(alerts_cfg, 'leak_repeat_minutes'):
+          config_data['alerts']['leak_repeat_minutes'] = alerts_cfg.leak_repeat_minutes
+        if hasattr(alerts_cfg, 'irregular_flow_threshold'):
+          config_data['alerts']['irregular_flow_threshold'] = alerts_cfg.irregular_flow_threshold
+      
       # Write the updated config back to file with nice formatting
       with open(self.filename, 'w') as f:
         json.dump(config_data, f, indent=2)

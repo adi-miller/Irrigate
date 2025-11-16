@@ -1268,6 +1268,102 @@ function renderQueue(queueData) {
 
 // ==================== CONFIG RENDERING ====================
 
+function renderAlertsConfig(config) {
+    const alerts = config.alerts || {};
+    const enabled = alerts.enabled || {};
+    
+    const alertTypes = [
+        { 
+            key: 'leak', 
+            label: 'Leak Detection', 
+            icon: '💧', 
+            description: 'Flow detected when all valves are closed',
+            setting: {
+                id: 'leak-repeat-minutes',
+                label: 'Alert Repeat Interval (minutes)',
+                value: alerts.leak_repeat_minutes || 15,
+                min: 1,
+                max: 60,
+                step: 1,
+                configKey: 'leak_repeat_minutes',
+                help: 'How often to repeat leak alerts while leak persists'
+            }
+        },
+        { 
+            key: 'malfunction_no_flow', 
+            label: 'Malfunction (No Flow)', 
+            icon: '🚫', 
+            description: 'Valve open but no water flow detected'
+        },
+        { 
+            key: 'irregular_flow', 
+            label: 'Irregular Flow', 
+            icon: '📊', 
+            description: 'Flow rate outside baseline range',
+            setting: {
+                id: 'irregular-flow-threshold',
+                label: 'Threshold (standard deviations)',
+                value: alerts.irregular_flow_threshold || 2.0,
+                min: 0.5,
+                max: 5.0,
+                step: 0.1,
+                configKey: 'irregular_flow_threshold',
+                help: 'Number of standard deviations from baseline to trigger alert'
+            }
+        },
+        { 
+            key: 'sensor_error', 
+            label: 'Sensor Error', 
+            icon: '⚠️', 
+            description: 'Sensor failures and communication issues'
+        },
+        { 
+            key: 'system_exit', 
+            label: 'System Exit', 
+            icon: '🛑', 
+            description: 'System shutdown or termination'
+        }
+    ];
+    
+    return `
+        <div class="alerts-toggle-list">
+            ${alertTypes.map(alert => `
+                <div class="alert-toggle-item">
+                    <div class="alert-toggle-header">
+                        <span class="alert-icon">${alert.icon}</span>
+                        <div class="alert-info">
+                            <div class="alert-label">${alert.label}</div>
+                            <div class="alert-description">${alert.description}</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" 
+                                   id="alert-${alert.key}" 
+                                   ${enabled[alert.key] ? 'checked' : ''}
+                                   onchange="toggleAlert('${alert.key}', this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    ${alert.setting ? `
+                        <div class="alert-setting" id="alert-setting-${alert.key}" style="display: ${enabled[alert.key] ? 'block' : 'none'};">
+                            <div class="form-group">
+                                <label for="${alert.setting.id}">${alert.setting.label}</label>
+                                <input type="number" 
+                                       id="${alert.setting.id}" 
+                                       value="${alert.setting.value}" 
+                                       min="${alert.setting.min}" 
+                                       max="${alert.setting.max}" 
+                                       step="${alert.setting.step}"
+                                       onchange="updateAlertSetting('${alert.setting.configKey}', this.value)">
+                                <small>${alert.setting.help}</small>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
 function renderConfig(config, valves) {
     const view = document.getElementById('config-view');
     if (!view) return;
@@ -1279,7 +1375,7 @@ function renderConfig(config, valves) {
     view.innerHTML = `
         <div class="config-section collapsible">
             <div class="config-section-header" onclick="toggleConfigSection('schedules')">
-                <h3>Schedules</h3>
+                <h3>📅 Schedules</h3>
                 <span class="collapse-icon">▶</span>
             </div>
             <div class="config-section-content" id="schedules" style="display: none;">
@@ -1291,7 +1387,7 @@ function renderConfig(config, valves) {
 
         <div class="config-section collapsible">
             <div class="config-section-header" onclick="toggleConfigSection('simulate')">
-                <h3>Schedule Simulator</h3>
+                <h3>🧪 Schedule Simulator</h3>
                 <span class="collapse-icon">▶</span>
             </div>
             <div class="config-section-content" id="simulate" style="display: none;">
@@ -1354,8 +1450,21 @@ function renderConfig(config, valves) {
         </div>
 
         <div class="config-section collapsible">
+            <div class="config-section-header" onclick="toggleConfigSection('alerts')">
+                <h3>🚨 Alert Settings</h3>
+                <span class="collapse-icon">▶</span>
+            </div>
+            <div class="config-section-content" id="alerts" style="display: none;">
+                <div class="alerts-config">
+                    <p class="config-description">Configure which alerts are enabled and their settings</p>
+                    ${renderAlertsConfig(config)}
+                </div>
+            </div>
+        </div>
+
+        <div class="config-section collapsible">
             <div class="config-section-header" onclick="toggleConfigSection('system-config')">
-                <h3>System Configuration</h3>
+                <h3>⚙️ System Configuration</h3>
                 <span class="collapse-icon">▶</span>
             </div>
             <div class="config-section-content" id="system-config" style="display: none;">
@@ -1798,6 +1907,59 @@ function toggleConfigSection(sectionId) {
     } else {
         content.style.display = 'none';
         icon.textContent = '▶';
+    }
+}
+
+async function toggleAlert(alertType, enabled) {
+    try {
+        const response = await fetch('/api/config/alerts/enabled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                alert_type: alertType,
+                enabled: enabled
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to update alert setting');
+        }
+        
+        // Show/hide associated settings
+        const settingDiv = document.getElementById(`alert-setting-${alertType}`);
+        if (settingDiv) {
+            settingDiv.style.display = enabled ? 'block' : 'none';
+        }
+        
+        showToast(`Alert "${alertType}" ${enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (error) {
+        console.error('Error toggling alert:', error);
+        showToast('Failed to update alert setting', 'error');
+        // Revert checkbox state
+        const checkbox = document.getElementById(`alert-${alertType}`);
+        if (checkbox) checkbox.checked = !enabled;
+    }
+}
+
+async function updateAlertSetting(setting, value) {
+    try {
+        const response = await fetch('/api/config/alerts/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                setting: setting,
+                value: parseFloat(value)
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to update alert setting');
+        }
+        
+        showToast('Alert setting updated', 'success');
+    } catch (error) {
+        console.error('Error updating alert setting:', error);
+        showToast('Failed to update alert setting', 'error');
     }
 }
 

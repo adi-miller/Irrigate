@@ -345,6 +345,23 @@ async def get_config():
         raise HTTPException(status_code=503, detail="System not initialized")
     
     cfg = irrigate_instance.cfg
+    
+    # Get alerts configuration
+    alerts_config = {}
+    if hasattr(cfg.cfg, 'alerts'):
+        alerts_cfg = cfg.cfg.alerts
+        alerts_config = {
+            "enabled": {
+                "leak": alerts_cfg.enabled.leak if hasattr(alerts_cfg, 'enabled') else True,
+                "malfunction_no_flow": alerts_cfg.enabled.malfunction_no_flow if hasattr(alerts_cfg, 'enabled') else True,
+                "irregular_flow": alerts_cfg.enabled.irregular_flow if hasattr(alerts_cfg, 'enabled') else True,
+                "sensor_error": alerts_cfg.enabled.sensor_error if hasattr(alerts_cfg, 'enabled') else True,
+                "system_exit": alerts_cfg.enabled.system_exit if hasattr(alerts_cfg, 'enabled') else True,
+            },
+            "leak_repeat_minutes": alerts_cfg.leak_repeat_minutes if hasattr(alerts_cfg, 'leak_repeat_minutes') else 15,
+            "irregular_flow_threshold": alerts_cfg.irregular_flow_threshold if hasattr(alerts_cfg, 'irregular_flow_threshold') else 2.0,
+        }
+    
     return {
         "timezone": cfg.timezone,
         "location": {
@@ -355,8 +372,65 @@ async def get_config():
         "telemetry_enabled": cfg.telemetry,
         "mqtt_enabled": cfg.mqttEnabled,
         "valve_count": len(irrigate_instance.valves),
-        "sensor_count": len(irrigate_instance.sensors)
+        "sensor_count": len(irrigate_instance.sensors),
+        "alerts": alerts_config
     }
+
+
+@app.post("/api/config/alerts/enabled")
+async def update_alert_enabled(request: dict):
+    """Update alert enabled/disabled state"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    alert_type = request.get("alert_type")
+    enabled = request.get("enabled")
+    
+    if not alert_type or enabled is None:
+        raise HTTPException(status_code=400, detail="Missing alert_type or enabled")
+    
+    # Update the alert manager
+    from alerts import AlertType
+    alert_type_enum = AlertType(alert_type)
+    irrigate_instance.alerts.enabled[alert_type_enum] = enabled
+    
+    # Update config file
+    irrigate_instance.cfg.cfg.alerts.enabled.__dict__[alert_type] = enabled
+    irrigate_instance.cfg.save_runtime_config()
+    
+    irrigate_instance.logger.info(f"Alert '{alert_type}' {'enabled' if enabled else 'disabled'}")
+    
+    return {"success": True, "alert_type": alert_type, "enabled": enabled}
+
+
+@app.post("/api/config/alerts/settings")
+async def update_alert_setting(request: dict):
+    """Update alert settings (leak_repeat_minutes, irregular_flow_threshold)"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    setting = request.get("setting")
+    value = request.get("value")
+    
+    if not setting or value is None:
+        raise HTTPException(status_code=400, detail="Missing setting or value")
+    
+    # Update the alert manager
+    if setting == "leak_repeat_minutes":
+        irrigate_instance.alerts.leak_repeat_minutes = int(value)
+        irrigate_instance.cfg.cfg.alerts.leak_repeat_minutes = int(value)
+    elif setting == "irregular_flow_threshold":
+        irrigate_instance.alerts.irregular_flow_threshold = float(value)
+        irrigate_instance.cfg.cfg.alerts.irregular_flow_threshold = float(value)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown setting: {setting}")
+    
+    # Save config file
+    irrigate_instance.cfg.save_runtime_config()
+    
+    irrigate_instance.logger.info(f"Alert setting '{setting}' updated to {value}")
+    
+    return {"success": True, "setting": setting, "value": value}
 
 
 @app.post("/api/valves/{valve_name}/start-manual")
