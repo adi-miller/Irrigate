@@ -159,6 +159,16 @@ class Config:
         if hasattr(alerts_cfg, 'irregular_flow_threshold'):
           config_data['alerts']['irregular_flow_threshold'] = alerts_cfg.irregular_flow_threshold
       
+      # Update waterflow configuration if it exists
+      if hasattr(self.cfg, 'waterflow') and 'waterflow' in config_data:
+        waterflow_cfg = self.cfg.waterflow
+        
+        # Update waterflow settings
+        if hasattr(waterflow_cfg, 'enabled'):
+          config_data['waterflow']['enabled'] = waterflow_cfg.enabled
+        if hasattr(waterflow_cfg, 'leakdetection'):
+          config_data['waterflow']['leakdetection'] = waterflow_cfg.leakdetection
+      
       # Write the updated config back to file with nice formatting
       with open(self.filename, 'w') as f:
         json.dump(config_data, f, indent=2)

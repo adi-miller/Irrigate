@@ -362,6 +362,15 @@ async def get_config():
             "irregular_flow_threshold": alerts_cfg.irregular_flow_threshold if hasattr(alerts_cfg, 'irregular_flow_threshold') else 2.0,
         }
     
+    # Get waterflow configuration
+    waterflow_config = {}
+    if irrigate_instance.waterflow:
+        waterflow_config = {
+            "enabled": irrigate_instance.waterflow.enabled,
+            "type": irrigate_instance.waterflow.type,
+            "leak_detection": irrigate_instance.waterflow.leakdetection
+        }
+    
     return {
         "timezone": cfg.timezone,
         "location": {
@@ -373,7 +382,8 @@ async def get_config():
         "mqtt_enabled": cfg.mqttEnabled,
         "valve_count": len(irrigate_instance.valves),
         "sensor_count": len(irrigate_instance.sensors),
-        "alerts": alerts_config
+        "alerts": alerts_config,
+        "waterflow": waterflow_config
     }
 
 
@@ -429,6 +439,39 @@ async def update_alert_setting(request: dict):
     irrigate_instance.cfg.save_runtime_config()
     
     irrigate_instance.logger.info(f"Alert setting '{setting}' updated to {value}")
+    
+    return {"success": True, "setting": setting, "value": value}
+
+
+@app.post("/api/config/waterflow")
+async def update_waterflow_config(request: dict):
+    """Update waterflow configuration (enabled, leak_detection)"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if not irrigate_instance.waterflow:
+        raise HTTPException(status_code=400, detail="Waterflow not configured in system")
+    
+    setting = request.get("setting")
+    value = request.get("value")
+    
+    if not setting or value is None:
+        raise HTTPException(status_code=400, detail="Missing setting or value")
+    
+    # Update waterflow settings
+    if setting == "enabled":
+        irrigate_instance.waterflow.enabled = bool(value)
+        irrigate_instance.cfg.cfg.waterflow.enabled = bool(value)
+        irrigate_instance.logger.info(f"Waterflow {'enabled' if value else 'disabled'} (requires restart to take effect)")
+    elif setting == "leak_detection":
+        irrigate_instance.waterflow.leakdetection = bool(value)
+        irrigate_instance.cfg.cfg.waterflow.leakdetection = bool(value)
+        irrigate_instance.logger.info(f"Waterflow leak detection {'enabled' if value else 'disabled'}")
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown setting: {setting}")
+    
+    # Save config file
+    irrigate_instance.cfg.save_runtime_config()
     
     return {"success": True, "setting": setting, "value": value}
 

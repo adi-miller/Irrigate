@@ -59,7 +59,7 @@ function switchTab(tabName) {
             loadQueue();
             break;
         case 'sensors':
-            if (statusData) renderSensors(statusData.sensors, statusData.waterflow);
+            if (statusData) renderSensors(statusData.sensors);
             break;
         case 'config':
             loadConfig();
@@ -118,7 +118,7 @@ async function loadStatus() {
                 renderValves(data.valves, queueData);
             }
         } else if (currentTab === 'sensors') {
-            renderSensors(data.sensors, data.waterflow);
+            renderSensors(data.sensors);
         } else if (currentTab === 'queue') {
             renderQueue(queueData);
         }
@@ -1093,7 +1093,7 @@ function refreshOpenSchedulePanels() {
 
 // ==================== SENSOR RENDERING ====================
 
-function renderSensors(sensors, waterflow = null) {
+function renderSensors(sensors) {
     const list = document.getElementById('sensors-list');
     if (!list) return;
     
@@ -1103,62 +1103,12 @@ function renderSensors(sensors, waterflow = null) {
     
     let html = '';
     
-    // Add waterflow sensor card if enabled
-    if (waterflow && waterflow.enabled) {
-        const isLeaking = statusData && statusData.system && 
-                          statusData.system.temp_status && 
-                          statusData.system.temp_status.includes('Leaking');
-        
-        html += `
-            <div class="sensor-card ${waterflow.is_active ? 'sensor-active' : ''} ${isLeaking ? 'sensor-leak' : ''}">
-                <div class="sensor-header">
-                    <h3 class="sensor-name">💧 Waterflow Sensor</h3>
-                    <span class="sensor-type">${waterflow.type}</span>
-                </div>
-                
-                <div class="sensor-telemetry">
-                    <div class="telemetry-item">
-                        <div class="telemetry-label">Flow Rate</div>
-                        <div class="telemetry-value ${waterflow.is_active ? 'telemetry-active' : ''}">
-                            ${waterflow.flow_rate_lpm} L/min
-                        </div>
-                    </div>
-                    
-                    <div class="telemetry-item">
-                        <div class="telemetry-label">Status</div>
-                        <div class="telemetry-value">
-                            ${isLeaking ? '⚠️ LEAK DETECTED' : 
-                              waterflow.is_active ? '🟢 Active Flow' : 
-                              '⚪ No Flow'}
-                        </div>
-                    </div>
-                    
-                    <div class="telemetry-item">
-                        <div class="telemetry-label">Leak Detection</div>
-                        <div class="telemetry-value">
-                            ${waterflow.leak_detection_enabled ? '✅ Enabled' : '❌ Disabled'}
-                        </div>
-                    </div>
-                    
-                    ${waterflow.last_update ? `
-                        <div class="telemetry-item">
-                            <div class="telemetry-label">Last Update</div>
-                            <div class="telemetry-value">
-                                ${new Date(waterflow.last_update).toLocaleTimeString()}
-                            </div>
-                        </div>
-                    ` : ''}
-                </div>
-            </div>
-        `;
-    }
+    // Waterflow removed from sensors tab - now shown in config tab
     
     // Add regular sensors
     if (!sensors || sensors.length === 0) {
-        if (!waterflow || !waterflow.enabled) {
-            list.innerHTML = '<p class="text-center">No sensors configured</p>';
-            return;
-        }
+        list.innerHTML = '<p class="text-center">No sensors configured</p>';
+        return;
     } else {
         html += sensors.map(sensor => {
         const telemetry = sensor.telemetry || {};
@@ -1267,6 +1217,47 @@ function renderQueue(queueData) {
 }
 
 // ==================== CONFIG RENDERING ====================
+
+function renderWaterflowConfig(config) {
+    const waterflow = config.waterflow || {};
+    
+    if (!waterflow || Object.keys(waterflow).length === 0) {
+        return '<p class="config-description">No waterflow sensor configured</p>';
+    }
+    
+    return `
+        <div class="config-grid">
+            <div class="config-item">
+                <div class="config-label">Type</div>
+                <div class="config-value">${waterflow.type || 'Unknown'}</div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Sensor Enabled</div>
+                <div class="config-value">
+                    <label class="toggle-switch">
+                        <input type="checkbox" 
+                               ${waterflow.enabled ? 'checked' : ''} 
+                               onchange="updateWaterflowSetting('enabled', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="config-note">⚠️ Requires system restart to take effect</span>
+                </div>
+            </div>
+            <div class="config-item">
+                <div class="config-label">Leak Detection</div>
+                <div class="config-value">
+                    <label class="toggle-switch">
+                        <input type="checkbox" 
+                               ${waterflow.leak_detection ? 'checked' : ''} 
+                               onchange="updateWaterflowSetting('leak_detection', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="config-note">Detect leaks when all valves are closed</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
 
 function renderAlertsConfig(config) {
     const alerts = config.alerts || {};
@@ -1458,6 +1449,19 @@ function renderConfig(config, valves) {
                 <div class="alerts-config">
                     <p class="config-description">Configure which alerts are enabled and their settings</p>
                     ${renderAlertsConfig(config)}
+                </div>
+            </div>
+        </div>
+
+        <div class="config-section collapsible">
+            <div class="config-section-header" onclick="toggleConfigSection('waterflow-config')">
+                <h3>💧 Waterflow Sensor</h3>
+                <span class="collapse-icon">▶</span>
+            </div>
+            <div class="config-section-content" id="waterflow-config" style="display: none;">
+                <div class="waterflow-config">
+                    <p class="config-description">Configure waterflow sensor settings</p>
+                    ${renderWaterflowConfig(config)}
                 </div>
             </div>
         </div>
@@ -1960,6 +1964,35 @@ async function updateAlertSetting(setting, value) {
     } catch (error) {
         console.error('Error updating alert setting:', error);
         showToast('Failed to update alert setting', 'error');
+    }
+}
+
+async function updateWaterflowSetting(setting, value) {
+    try {
+        const response = await fetch('/api/config/waterflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                setting: setting,
+                value: value
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to update waterflow setting');
+        }
+        
+        if (setting === 'enabled') {
+            showToast('Waterflow sensor updated (restart required)', 'success');
+        } else {
+            showToast('Waterflow setting updated', 'success');
+        }
+    } catch (error) {
+        console.error('Error updating waterflow setting:', error);
+        showToast('Failed to update waterflow setting', 'error');
+        // Revert checkbox state
+        const checkbox = event.target;
+        if (checkbox) checkbox.checked = !value;
     }
 }
 
