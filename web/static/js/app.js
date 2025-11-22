@@ -117,8 +117,6 @@ async function loadStatus() {
                 // Initial render
                 renderValves(data.valves, queueData);
             }
-        } else if (currentTab === 'sensors') {
-            renderSensors(data.sensors);
         } else if (currentTab === 'queue') {
             renderQueue(queueData);
         }
