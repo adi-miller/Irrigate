@@ -1,20 +1,31 @@
 import json
+import os
 import model
 from valves import valveFactory
 from types import SimpleNamespace
 from sensors.base_sensor import sensorFactory
 from waterflows import waterflowFactory
+from jsonschema import validate, ValidationError, SchemaError
 
 class Config:
   def __init__(self, logger, filename):
     self.logger = logger
     self.filename = filename  # Store filename for later saving
+    
+    # Load configuration file
     with open(filename, 'r') as stream:
       try:
-        self.cfg = json.loads(stream.read(), object_hook=lambda d: SimpleNamespace(**d))
+        config_data = json.loads(stream.read())
       except Exception as ex:
         self.logger.exception(ex)
         print(ex)
+        raise
+
+    # Validate configuration against JSON schema
+    self.validate_config_schema(config_data)
+    
+    # Convert to SimpleNamespace after validation
+    self.cfg = json.loads(json.dumps(config_data), object_hook=lambda d: SimpleNamespace(**d))
 
     try:
       self.mqttEnabled = self.cfg.mqtt.enabled
@@ -43,6 +54,36 @@ class Config:
 
   def getLatLon(self):
     return self.latitude, self.longitude
+
+  def validate_config_schema(self, config_data):
+    # Load the schema file
+    schema_path = os.path.join(os.path.dirname(self.filename), 'config.schema.json')
+    if not os.path.exists(schema_path):
+      self.logger.warning(f"Schema file not found at {schema_path} - skipping schema validation")
+      return
+    
+    try:
+      with open(schema_path, 'r') as schema_file:
+        schema = json.load(schema_file)
+      
+      # Validate against schema
+      validate(instance=config_data, schema=schema)
+      self.logger.info("Configuration validation passed successfully")
+      
+    except ValidationError as e:
+      # Format validation error message
+      error_path = ' -> '.join(str(p) for p in e.path) if e.path else 'root'
+      error_msg = f"Configuration validation failed at '{error_path}': {e.message}"
+      self.logger.error(error_msg)
+      raise ValueError(error_msg)
+    
+    except SchemaError as e:
+      self.logger.error(f"Invalid schema file: {e.message}")
+      raise ValueError(f"Invalid schema file: {e.message}")
+    
+    except Exception as e:
+      self.logger.error(f"Error during schema validation: {str(e)}")
+      raise
 
   def initValves(self):
     valves = {}

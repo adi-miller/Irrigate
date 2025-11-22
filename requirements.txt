@@ -5,3 +5,4 @@ requests
 RPi.GPIO
 fastapi
 uvicorn[standard]
+jsonschema
