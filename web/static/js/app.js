@@ -59,7 +59,7 @@ function switchTab(tabName) {
             loadQueue();
             break;
         case 'sensors':
-            if (statusData) renderSensors(statusData.sensors);
+            loadSensorsWithConfig();
             break;
         case 'config':
             loadConfig();
@@ -1093,7 +1093,19 @@ function refreshOpenSchedulePanels() {
 
 // ==================== SENSOR RENDERING ====================
 
-function renderSensors(sensors) {
+async function loadSensorsWithConfig() {
+    try {
+        const [statusData, configData] = await Promise.all([
+            apiCall('/api/status'),
+            apiCall('/api/config')
+        ]);
+        renderSensors(statusData.sensors, configData.sensors);
+    } catch (error) {
+        console.error('Failed to load sensors:', error);
+    }
+}
+
+function renderSensors(sensors, sensorConfigs = []) {
     const list = document.getElementById('sensors-list');
     if (!list) return;
     
@@ -1103,8 +1115,6 @@ function renderSensors(sensors) {
     
     let html = '';
     
-    // Waterflow removed from sensors tab - now shown in config tab
-    
     // Add regular sensors
     if (!sensors || sensors.length === 0) {
         list.innerHTML = '<p class="text-center">No sensors configured</p>';
@@ -1113,6 +1123,9 @@ function renderSensors(sensors) {
         html += sensors.map(sensor => {
         const telemetry = sensor.telemetry || {};
         const hasError = sensor.error || false;
+        
+        // Find matching config
+        const sensorConfig = sensorConfigs.find(c => c.name === sensor.name) || {};
         
         return `
             <div class="sensor-card">
@@ -1131,6 +1144,13 @@ function renderSensors(sensors) {
                             <div class="telemetry-item">
                                 <div class="telemetry-label">UV Index</div>
                                 <div class="telemetry-value">${telemetry.uv_index.toFixed(1)}</div>
+                            </div>
+                        ` : ''}
+                        
+                        ${telemetry.recentPrecip !== undefined ? `
+                            <div class="telemetry-item">
+                                <div class="telemetry-label">Recent Precipitation</div>
+                                <div class="telemetry-value">${telemetry.recentPrecip.toFixed(1)} mm</div>
                             </div>
                         ` : ''}
                         
@@ -1163,6 +1183,36 @@ function renderSensors(sensors) {
                         ` : ''}
                     </div>
                 `}
+                
+                ${sensorConfig.precipitation ? `
+                    <div class="sensor-config" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                        <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-secondary);">⚙️ Settings</h4>
+                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                            <label for="sensor-${sensor.name}-days" style="font-size: 0.85rem;">Days to Aggregate</label>
+                            <input type="number" 
+                                   id="sensor-${sensor.name}-days" 
+                                   value="${sensorConfig.precipitation.days_to_aggregate}" 
+                                   min="1" 
+                                   max="7" 
+                                   step="1"
+                                   style="width: 100%; padding: 0.4rem;"
+                                   onchange="updateSensorSetting('${sensor.name}', 'precip_days', this.value)">
+                            <small style="font-size: 0.75rem;">Past days to sum precipitation (1-7)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="sensor-${sensor.name}-threshold" style="font-size: 0.85rem;">Disable Threshold (mm)</label>
+                            <input type="number" 
+                                   id="sensor-${sensor.name}-threshold" 
+                                   value="${sensorConfig.precipitation.disable_threshold_mm}" 
+                                   min="0.1" 
+                                   max="50" 
+                                   step="0.1"
+                                   style="width: 100%; padding: 0.4rem;"
+                                   onchange="updateSensorSetting('${sensor.name}', 'precip_threshold', this.value)">
+                            <small style="font-size: 0.75rem;">Skip irrigation if total exceeds this (0.1-50 mm)</small>
+                        </div>
+                    </div>
+                ` : ''}
             </div>
         `;
         }).join('');
@@ -1226,33 +1276,43 @@ function renderWaterflowConfig(config) {
     }
     
     return `
-        <div class="config-grid">
+        <div class="config-grid" style="margin-bottom: 1.5rem;">
             <div class="config-item">
-                <div class="config-label">Type</div>
+                <div class="config-label">TYPE</div>
                 <div class="config-value">${waterflow.type || 'Unknown'}</div>
             </div>
-            <div class="config-item">
-                <div class="config-label">Sensor Enabled</div>
-                <div class="config-value">
+        </div>
+        
+        <div class="alerts-toggle-list">
+            <div class="alert-toggle-item">
+                <div class="alert-toggle-header">
+                    <span class="alert-icon">⚡</span>
+                    <div class="alert-info">
+                        <div class="alert-label">Sensor Enabled</div>
+                        <div class="alert-description">⚠️ Requires system restart to take effect</div>
+                    </div>
                     <label class="toggle-switch">
                         <input type="checkbox" 
                                ${waterflow.enabled ? 'checked' : ''} 
                                onchange="updateWaterflowSetting('enabled', this.checked)">
                         <span class="toggle-slider"></span>
                     </label>
-                    <span class="config-note">⚠️ Requires system restart to take effect</span>
                 </div>
             </div>
-            <div class="config-item">
-                <div class="config-label">Leak Detection</div>
-                <div class="config-value">
+            
+            <div class="alert-toggle-item">
+                <div class="alert-toggle-header">
+                    <span class="alert-icon">💧</span>
+                    <div class="alert-info">
+                        <div class="alert-label">Leak Detection</div>
+                        <div class="alert-description">Detect leaks when all valves are closed</div>
+                    </div>
                     <label class="toggle-switch">
                         <input type="checkbox" 
                                ${waterflow.leak_detection ? 'checked' : ''} 
                                onchange="updateWaterflowSetting('leak_detection', this.checked)">
                         <span class="toggle-slider"></span>
                     </label>
-                    <span class="config-note">Detect leaks when all valves are closed</span>
                 </div>
             </div>
         </div>
@@ -1993,6 +2053,28 @@ async function updateWaterflowSetting(setting, value) {
         // Revert checkbox state
         const checkbox = event.target;
         if (checkbox) checkbox.checked = !value;
+    }
+}
+
+async function updateSensorSetting(sensorName, setting, value) {
+    try {
+        const response = await fetch(`/api/config/sensors/${encodeURIComponent(sensorName)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                setting: setting,
+                value: parseFloat(value)
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to update sensor setting');
+        }
+        
+        showToast('Sensor setting updated', 'success');
+    } catch (error) {
+        console.error('Error updating sensor setting:', error);
+        showToast('Failed to update sensor setting', 'error');
     }
 }
 

@@ -169,6 +169,22 @@ class Config:
         if hasattr(waterflow_cfg, 'leakdetection'):
           config_data['waterflow']['leakdetection'] = waterflow_cfg.leakdetection
       
+      # Update sensors configuration if it exists
+      if hasattr(self.cfg, 'sensors') and 'sensors' in config_data:
+        for sensor_cfg in self.cfg.sensors:
+          # Find matching sensor in config_data
+          for sensor_data in config_data['sensors']:
+            if sensor_data['name'] == sensor_cfg.name:
+              # Update sensor-specific settings
+              if hasattr(sensor_cfg, 'precipitation'):
+                if 'precipitation' not in sensor_data:
+                  sensor_data['precipitation'] = {}
+                if hasattr(sensor_cfg.precipitation, 'days_to_aggregate'):
+                  sensor_data['precipitation']['days_to_aggregate'] = sensor_cfg.precipitation.days_to_aggregate
+                if hasattr(sensor_cfg.precipitation, 'disable_threshold_mm'):
+                  sensor_data['precipitation']['disable_threshold_mm'] = sensor_cfg.precipitation.disable_threshold_mm
+              break
+      
       # Write the updated config back to file with nice formatting
       with open(self.filename, 'w') as f:
         json.dump(config_data, f, indent=2)

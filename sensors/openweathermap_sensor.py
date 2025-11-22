@@ -17,6 +17,14 @@ class OpenWeatherMapSensor(BaseSensor):
     # self.probabilityThreshold = config['probabilityThreshold']
     self._sendTelemetry = False
     self.uv_adjustments = config.uv_adjustments if hasattr(config, 'uv_adjustments') else []
+    
+    # Precipitation configuration with defaults
+    if hasattr(config, 'precipitation'):
+      self.precip_days = config.precipitation.days_to_aggregate if hasattr(config.precipitation, 'days_to_aggregate') else 3
+      self.precip_threshold = config.precipitation.disable_threshold_mm if hasattr(config.precipitation, 'disable_threshold_mm') else 1.0
+    else:
+      self.precip_days = 3
+      self.precip_threshold = 1.0
 
   def start(self):
     if self.started:
@@ -42,7 +50,7 @@ class OpenWeatherMapSensor(BaseSensor):
 
       # Get recent
       self.recentPrecip = 0
-      for i in range(3):
+      for i in range(self.precip_days):
         day = dateNow - timedelta(i+1)
         url = f"https://api.openweathermap.org/data/3.0/onecall/day_summary?date={day.strftime('%Y-%m-%d')}&lat={self.lat}&lon={self.lon}&appid={self.apiKey}"
         res = self.call_api(url)
@@ -69,7 +77,7 @@ class OpenWeatherMapSensor(BaseSensor):
     
   def shouldDisable(self):
     # Disable if it rained recently
-    if self.recentPrecip > 1:
+    if self.recentPrecip > self.precip_threshold:
       return True
 
     return False

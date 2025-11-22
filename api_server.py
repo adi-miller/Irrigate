@@ -371,6 +371,24 @@ async def get_config():
             "leak_detection": irrigate_instance.waterflow.leakdetection
         }
     
+    # Get sensors configuration
+    sensors_config = []
+    for name, sensor in irrigate_instance.sensors.items():
+        sensor_cfg = {
+            "name": name,
+            "type": sensor.type if hasattr(sensor, 'type') else 'unknown',
+            "enabled": sensor.enabled if hasattr(sensor, 'enabled') else False
+        }
+        
+        # Add OpenWeatherMap specific config
+        if sensor.type == 'OpenWeatherMap' and hasattr(sensor, 'precip_days'):
+            sensor_cfg["precipitation"] = {
+                "days_to_aggregate": sensor.precip_days,
+                "disable_threshold_mm": sensor.precip_threshold
+            }
+        
+        sensors_config.append(sensor_cfg)
+    
     return {
         "timezone": cfg.timezone,
         "location": {
@@ -383,7 +401,8 @@ async def get_config():
         "valve_count": len(irrigate_instance.valves),
         "sensor_count": len(irrigate_instance.sensors),
         "alerts": alerts_config,
-        "waterflow": waterflow_config
+        "waterflow": waterflow_config,
+        "sensors": sensors_config
     }
 
 
@@ -474,6 +493,59 @@ async def update_waterflow_config(request: dict):
     irrigate_instance.cfg.save_runtime_config()
     
     return {"success": True, "setting": setting, "value": value}
+
+
+@app.post("/api/config/sensors/{sensor_name}")
+async def update_sensor_config(sensor_name: str, request: dict):
+    """Update sensor configuration settings"""
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    
+    if sensor_name not in irrigate_instance.sensors:
+        raise HTTPException(status_code=404, detail=f"Sensor '{sensor_name}' not found")
+    
+    sensor = irrigate_instance.sensors[sensor_name]
+    setting = request.get("setting")
+    value = request.get("value")
+    
+    if not setting or value is None:
+        raise HTTPException(status_code=400, detail="Missing setting or value")
+    
+    # Find sensor config in cfg
+    sensor_cfg = None
+    for s in irrigate_instance.cfg.cfg.sensors:
+        if s.name == sensor_name:
+            sensor_cfg = s
+            break
+    
+    if not sensor_cfg:
+        raise HTTPException(status_code=404, detail=f"Sensor config for '{sensor_name}' not found")
+    
+    # Update sensor-specific settings
+    if sensor.type == 'OpenWeatherMap':
+        if setting == "precip_days":
+            sensor.precip_days = int(value)
+            if not hasattr(sensor_cfg, 'precipitation'):
+                from types import SimpleNamespace
+                sensor_cfg.precipitation = SimpleNamespace()
+            sensor_cfg.precipitation.days_to_aggregate = int(value)
+            irrigate_instance.logger.info(f"Sensor '{sensor_name}' precipitation days updated to {value}")
+        elif setting == "precip_threshold":
+            sensor.precip_threshold = float(value)
+            if not hasattr(sensor_cfg, 'precipitation'):
+                from types import SimpleNamespace
+                sensor_cfg.precipitation = SimpleNamespace()
+            sensor_cfg.precipitation.disable_threshold_mm = float(value)
+            irrigate_instance.logger.info(f"Sensor '{sensor_name}' precipitation threshold updated to {value}mm")
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown setting: {setting}")
+    else:
+        raise HTTPException(status_code=400, detail=f"Sensor type '{sensor.type}' settings not supported")
+    
+    # Save config file
+    irrigate_instance.cfg.save_runtime_config()
+    
+    return {"success": True, "sensor": sensor_name, "setting": setting, "value": value}
 
 
 @app.post("/api/valves/{valve_name}/start-manual")
