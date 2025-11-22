@@ -670,7 +670,7 @@ function renderValves(valves, queueData = null) {
                     `}
                     
                     <button class="btn btn-small" onclick="toggleSchedulePanel('${valve.name}')">
-                        📅 Schedules
+                        ℹ️ Information
                     </button>
                 </div>
                 
@@ -999,16 +999,83 @@ async function loadSchedulePanelData(name) {
     try {
         const details = await apiCall(`/api/valves/${name}`);
         
+        // Get config to fetch irregular_flow_threshold
+        const config = await apiCall('/api/config');
+        const threshold = config.alerts?.irregular_flow_threshold || 2.0;
+        
+        // Build metrics section
+        let metricsHTML = '';
+        if (details.baseline_lpm !== null && details.baseline_lpm !== undefined) {
+            const alertRange = (details.baseline_std_dev * threshold).toFixed(2);
+            
+            const trendText = details.baseline_trend !== null 
+                ? `${details.baseline_trend > 0 ? '+' : ''}${details.baseline_trend.toFixed(2)}% per month`
+                : 'N/A (need 14+ samples)';
+            const trendColor = details.baseline_trend !== null 
+                ? (Math.abs(details.baseline_trend) > 5 ? '#ff9800' : '#4CAF50')
+                : '#999';
+            
+            metricsHTML = `
+                <div class="info-section">
+                    <h4 class="info-section-title">📊 Performance Metrics</h4>
+                    <div class="metrics-grid">
+                        <div class="metric-item">
+                            <span class="metric-label">Baseline Flow Rate:</span>
+                            <span class="metric-value">${details.baseline_lpm.toFixed(2)} L/min</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Std Dev:</span>
+                            <span class="metric-value">±${details.baseline_std_dev.toFixed(2)} L/min (alert at ±${alertRange})</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Data Points:</span>
+                            <span class="metric-value">${details.baseline_sample_count} days</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Flow Trend:</span>
+                            <span class="metric-value" style="color: ${trendColor}">${trendText}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else if (details.baseline_sample_count > 0) {
+            metricsHTML = `
+                <div class="info-section">
+                    <h4 class="info-section-title">📊 Performance Metrics</h4>
+                    <div class="metrics-collecting">
+                        <p>⏳ Collecting data (${details.baseline_sample_count}/10 days)</p>
+                        <p class="metrics-note">Metrics will be available after 10 days of operation</p>
+                    </div>
+                </div>
+            `;
+        } else {
+            metricsHTML = `
+                <div class="info-section">
+                    <h4 class="info-section-title">📊 Performance Metrics</h4>
+                    <div class="metrics-collecting">
+                        <p>⏳ No data yet</p>
+                        <p class="metrics-note">Metrics will appear after the valve operates</p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Build schedules section
+        let schedulesHTML = '';
         if (!details.schedules || details.schedules.length === 0) {
-            panel.innerHTML = `
+            schedulesHTML = `
                 <div class="schedule-panel-empty">
                     <p>No schedules configured for this valve</p>
                 </div>
             `;
-            return;
-        }
-        
-        const schedulesHTML = details.schedules.map((s, i) => {
+        } else {
+            schedulesHTML = `
+                <div class="info-section">
+                    <h4 class="info-section-title">📅 Schedules</h4>
+                    <div class="schedules-list">
+            `;
+            
+            schedulesHTML += details.schedules.map((s, i) => {
             // Format days - show "Everyday" if empty or all 7 days
             const allDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
             let daysText = 'Everyday';
@@ -1069,9 +1136,16 @@ async function loadSchedulePanelData(name) {
                     </div>
                 </div>
             `;
-        }).join('');
+            }).join('');
+            
+            schedulesHTML += `
+                    </div>
+                </div>
+            `;
+        }
         
-        panel.innerHTML = schedulesHTML;
+        // Combine schedules and metrics (schedules first)
+        panel.innerHTML = schedulesHTML + metricsHTML;
     } catch (error) {
         panel.innerHTML = `
             <div class="schedule-panel-error">

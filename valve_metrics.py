@@ -75,8 +75,8 @@ def load_baselines(valves_dict, logger):
         # Filter to last 30 days
         recent_data = [d for d in valve_data[valve_name] if d['date'] > cutoff_date]
         
-        if len(recent_data) < 3:
-            logger.info(f"Insufficient data for valve '{valve_name}' (only {len(recent_data)} days)")
+        if len(recent_data) < 10:
+            logger.info(f"Insufficient data for valve '{valve_name}' (only {len(recent_data)} days, need 10+)")
             valve.baseline_lpm = None
             valve.baseline_trend = None
             valve.baseline_std_dev = None
@@ -111,29 +111,32 @@ def load_baselines(valves_dict, logger):
         # Calculate standard deviation
         std_dev = statistics.stdev(lpm_values) if len(lpm_values) > 1 else 0
         
-        # Calculate trend (linear regression slope)
-        # y = mx + b, where x is day index (0 to n-1), y is lpm
-        x_values = list(range(len(lpm_values)))
-        x_mean = statistics.mean(x_values)
-        y_mean = statistics.mean(lpm_values)
-        
-        numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, lpm_values))
-        denominator = sum((x - x_mean) ** 2 for x in x_values)
-        
-        # Slope represents change in lpm per day
-        trend = numerator / denominator if denominator != 0 else 0
-        
-        # Convert to percentage change per 30 days
-        baseline_trend_pct = (trend * 30 / baseline_lpm * 100) if baseline_lpm > 0 else 0
+        # Calculate trend (linear regression slope) - only if enough samples
+        baseline_trend_pct = None
+        if len(lpm_values) >= 14:
+            # y = mx + b, where x is day index (0 to n-1), y is lpm
+            x_values = list(range(len(lpm_values)))
+            x_mean = statistics.mean(x_values)
+            y_mean = statistics.mean(lpm_values)
+            
+            numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, lpm_values))
+            denominator = sum((x - x_mean) ** 2 for x in x_values)
+            
+            # Slope represents change in lpm per day
+            trend = numerator / denominator if denominator != 0 else 0
+            
+            # Convert to percentage change per 30 days
+            baseline_trend_pct = (trend * 30 / baseline_lpm * 100) if baseline_lpm > 0 else 0
         
         # Update valve object
         valve.baseline_lpm = round(baseline_lpm, 2)
-        valve.baseline_trend = round(baseline_trend_pct, 2)
+        valve.baseline_trend = round(baseline_trend_pct, 2) if baseline_trend_pct is not None else None
         valve.baseline_std_dev = round(std_dev, 2)
         valve.baseline_sample_count = len(recent_data)
         
+        trend_text = f"{valve.baseline_trend:+.2f}% per month" if valve.baseline_trend is not None else "N/A (need 14+ samples)"
         logger.info(f"Valve '{valve_name}' baseline: {valve.baseline_lpm} L/min, "
-                   f"trend: {valve.baseline_trend:+.2f}% per month, "
+                   f"trend: {trend_text}, "
                    f"std dev: {valve.baseline_std_dev}, "
                    f"samples: {valve.baseline_sample_count}")
 

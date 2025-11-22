@@ -259,7 +259,11 @@ async def get_valve_details(valve_name: str):
         "seconds_last": v.secondsLast if hasattr(v, 'secondsLast') else 0,
         "liters_last": v.litersLast if hasattr(v, 'litersLast') else 0,
         "schedules": schedules,
-        "has_waterflow": v.waterflow is not None
+        "has_waterflow": v.waterflow is not None,
+        "baseline_lpm": v.baseline_lpm,
+        "baseline_trend": v.baseline_trend,
+        "baseline_std_dev": v.baseline_std_dev,
+        "baseline_sample_count": v.baseline_sample_count
     }
 
 
