@@ -945,7 +945,7 @@ def run_api_server(irrigate, host="0.0.0.0", port=8000):
         host=host,
         port=port,
         log_level="info",
-        access_log=True,
+        access_log=False,
         use_colors=True
     )
     server = uvicorn.Server(config)
