@@ -362,9 +362,11 @@ class Irrigate:
     return jobDuration
 
   def valveThread(self):
+    self.logger.info("Valve handler thread '%s' started." % threading.current_thread().name)
     while not self.terminated:
       try:
         irrigateJob = self.q.get(timeout=5)
+        self.logger.info("Thread '%s' picked up job for valve '%s'. Queue size: %s." % (threading.current_thread().name, irrigateJob.valve.name, self.q.qsize()))
         if irrigateJob.valve.handled:
           self.logger.warning("Valve '%s' already handled. Returning to queue in 1 minute." % (irrigateJob.valve.name))
           time.sleep(61)
@@ -490,14 +492,30 @@ class Irrigate:
         self.q.task_done()
       except queue.Empty:
         pass
+      except Exception as ex:
+        self.logger.error("Error in valve handler thread '%s': %s" % (threading.current_thread().name, format(ex)))
+        traceback.print_exc()
+        # Ensure valve is left in a safe (closed) state
+        try:
+          if irrigateJob and irrigateJob.valve:
+            if irrigateJob.valve.is_open:
+              irrigateJob.valve.is_open = False
+              irrigateJob.valve.close()
+              self.logger.info("Safety-closed valve '%s' after error." % irrigateJob.valve.name)
+            irrigateJob.valve.handled = False
+            irrigateJob.valve.waterflow = None
+        except Exception:
+          pass
     self.logger.warning("Valve handler thread '%s' exited." % threading.current_thread().name)
 
   def queueJob(self, job):
+    alive_workers = sum(1 for w in self.workers if w.is_alive())
+    qsize = self.q.qsize()
     self.q.put(job)
     if job.sched is not None:
-      self.logger.info(f"Valve '{job.valve.name}' job queued. Duration {job.duration} minutes.")
+      self.logger.info(f"Valve '{job.valve.name}' job queued. Duration {job.duration} minutes. Queue size: {qsize + 1}. Worker threads alive: {alive_workers}/{len(self.workers)}.")
     else:
-      self.logger.info(f"Valve '{job.valve.name}' adhoc job queued. Duration {job.duration} minutes.")
+      self.logger.info(f"Valve '{job.valve.name}' adhoc job queued. Duration {job.duration} minutes. Queue size: {qsize + 1}. Worker threads alive: {alive_workers}/{len(self.workers)}.")
 
   def everyXMinutes(self, key, interval, bootstrap):
     if not key in self._intervalDict.keys():
