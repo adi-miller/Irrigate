@@ -341,7 +341,7 @@ class Irrigate:
       try:
         factor = valve.sensor.getFactor()
         if factor != 1:
-          self.logger.info(f"Job duration adjusted from {sched.duration} to {jobDuration * factor} (factor: {factor}).")
+          self.logger.debug(f"Job duration adjusted from {sched.duration} to {jobDuration * factor} (factor: {factor}).")
           jobDuration *= factor
         
         self.clearTempStatus("SensorErr")
