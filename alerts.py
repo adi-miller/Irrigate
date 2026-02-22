@@ -1,7 +1,8 @@
 from enum import Enum
 from datetime import datetime, timedelta
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from alert_channels import channelFactory
 
 
 class AlertType(Enum):
@@ -75,11 +76,20 @@ class AlertManager:
         # Other alert configuration
         self.leak_repeat_minutes = alerts_cfg.leak_repeat_minutes
         self.leak_detection_exclusions = alerts_cfg.leak_detection_exclusions
-        
+
+        # Initialize alert channels
+        self.channels: List = []
+        if hasattr(alerts_cfg, 'channels'):
+            for channel_cfg in alerts_cfg.channels:
+                try:
+                    self.channels.append(channelFactory(logger, channel_cfg))
+                except Exception as ex:
+                    logger.error(f"Failed to initialize alert channel '{getattr(channel_cfg, 'type', '?')}': {ex}")
+
         # State tracking: key = (alert_type, valve_name), value = last_alerted_time
         self._alert_state: Dict[tuple, datetime] = {}
-        
-        self.logger.info("AlertManager initialized")
+
+        self.logger.info(f"AlertManager initialized with {len(self.channels)} channel(s)")
     
     def _should_alert(self, alert_type: AlertType, valve_name: Optional[str] = None) -> bool:
         """Check if we should fire this alert based on repeat logic"""
@@ -109,20 +119,27 @@ class AlertManager:
     
     def _notify(self, alert: Alert):
         """Send notifications for an alert"""
-        # For now, just log it with appropriate level
+        # Log with appropriate level
         log_message = f"ALERT [{alert.severity.value.upper()}] {alert.type.value}"
         if alert.valve_name:
             log_message += f" (valve: {alert.valve_name})"
         log_message += f": {alert.message}"
-        
+
         if alert.severity == AlertSeverity.CRITICAL:
             self.logger.critical(log_message)
         else:
             self.logger.warning(log_message)
-        
+
         # Log additional context data if present
         if alert.data:
             self.logger.info(f"  Alert data: {alert.data}")
+
+        # Dispatch to all configured channels
+        for channel in self.channels:
+            try:
+                channel.send(alert)
+            except Exception as ex:
+                self.logger.error(f"Alert channel {type(channel).__name__} raised an exception: {ex}")
     
     def is_in_exclusion_window(self, now: datetime) -> bool:
         """Check if current time is within any leak detection exclusion window.

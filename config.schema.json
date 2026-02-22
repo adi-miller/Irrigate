@@ -204,6 +204,42 @@
           "type": "number",
           "minimum": 0
         },
+        "channels": {
+          "type": "array",
+          "description": "Alert notification channels",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["millerbot"]
+              },
+              "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "user_id": {
+                "type": "integer"
+              },
+              "api_key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "if": {
+              "properties": {"type": {"const": "millerbot"}}
+            },
+            "then": {
+              "required": ["url", "user_id", "api_key", "role"]
+            },
+            "additionalProperties": false
+          }
+        },
         "leak_detection_exclusions": {
           "type": "array",
           "items": {
