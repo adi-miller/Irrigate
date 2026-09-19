@@ -1,182 +1,212 @@
-import time
+import math
 import threading
-from datetime import datetime
-from datetime import timedelta
-from paho.mqtt import client
 from collections import deque
-import random
 
-class BaseWaterflow():
-  def __init__(self, logger, config):
+from paho.mqtt import client
+
+from clock import SystemClock
+
+
+class BaseWaterflow:
+  def __init__(self, logger, config, clock=None):
     self.logger = logger
     self.config = config
-    self.enabled = config.enabled
+    self.clock = clock or SystemClock()
+    self._enabled = config.enabled
     self.type = config.type
-    self.leakdetection = config.leakdetection
-    self.started = False
-    self._lastLiter_1m = 0
-    self._lastupdate = datetime.now()
-    self._lastHistoryUpdate = datetime.now()
-    self._history = deque(maxlen=120)  # Store last 120 minutes of flow data as (timestamp, value) tuples
-    # Initialize with 120 zero values with timestamps going back 120 minutes
-    now = datetime.now()
-    for i in range(120):
-      # Start from 119 minutes ago up to current minute
-      timestamp = now - timedelta(minutes=119-i)
-      self._history.append((timestamp, 0.0))
+    self.leakdetection = getattr(config, "leakdetection", False)
+    self._started = False
+    self._connected = False
+    self._lastLiter_1m = 0.0
+    self._lastupdate = None
+    self._received = None
+    self._history_received = None
+    self._history = deque(maxlen=120)
+    self._lock = threading.RLock()
+    self._samples = deque(maxlen=2048)
+    self._availability = deque([(self.clock.monotonic(), False)], maxlen=2048)
+    self.last_error = None
+
+  def _record_availability(self):
+    with self._lock:
+      self._availability.append((
+        self.clock.monotonic(), self._enabled and self._started and self._connected,
+      ))
+
+  @property
+  def enabled(self):
+    return self._enabled
+
+  @enabled.setter
+  def enabled(self, value):
+    self._enabled = value
+    self._record_availability()
+
+  @property
+  def started(self):
+    return self._started
+
+  @started.setter
+  def started(self, value):
+    self._started = value
+    self._record_availability()
+
+  @property
+  def connected(self):
+    return self._connected
+
+  @connected.setter
+  def connected(self, value):
+    self._connected = value
+    self._record_availability()
 
   def lastLiter_1m(self):
-    now = datetime.now()
-    
-    # If no update for more than 60 seconds, flow is 0
-    if now > self._lastupdate + timedelta(0, 60):
-      # Update history with 0 if enough time has passed
-      if now > self._lastHistoryUpdate + timedelta(seconds=60):
-        self._history.append((now, 0.0))
-        self._lastHistoryUpdate = now      
-      return 0
-
-    return self._lastLiter_1m
+    """Last observation, not a freshness assertion; consumers must read snapshot."""
+    with self._lock:
+      return self._lastLiter_1m
 
   def setLastLiter_1m(self, value):
-    self._lastLiter_1m = value
-    self._lastupdate = datetime.now()
-    
-    # Only add to history once per minute
-    now = datetime.now()
-    if now > self._lastHistoryUpdate + timedelta(seconds=60):
-      self._history.append((now, float(value)))
-      self._lastHistoryUpdate = now
-  
+    if isinstance(value, bool):
+      raise ValueError("Water flow must be a finite nonnegative number")
+    value = float(value)
+    if not math.isfinite(value) or value < 0:
+      raise ValueError("Water flow must be a finite nonnegative number")
+    now = self.clock.monotonic()
+    timestamp = self.clock.now().replace(tzinfo=None)
+    with self._lock:
+      self._lastLiter_1m = value
+      self._lastupdate = timestamp
+      self._received = now
+      self._samples.append((now, value))
+      self.last_error = None
+      if self._history_received is None or now - self._history_received >= 60:
+        self._history.append((timestamp, value))
+        self._history_received = now
+
+  def snapshot(self):
+    with self._lock:
+      age = None if self._received is None else max(0.0, self.clock.monotonic() - self._received)
+      fresh = age is not None and age <= 60
+      available = self.enabled and self.started and self.connected and fresh
+      reason = None
+      if not self.enabled:
+        reason = "disabled"
+      elif not self.started or not self.connected:
+        reason = "disconnected"
+      elif age is None:
+        reason = "no valid reading"
+      elif not fresh:
+        reason = "stale reading"
+      return {
+        "value": self._lastLiter_1m if self._received is not None else None,
+        "received": self._received, "timestamp": self._lastupdate,
+        "available": bool(available), "fresh": fresh,
+        "age_seconds": age, "reason": reason, "enabled": self.enabled,
+      }
+
+  def get_health(self):
+    return {key: value for key, value in self.snapshot().items()
+            if key not in ("timestamp", "received", "value")}
+
   def getHistory(self):
-    """Return list of last 120 minutes of flow data as dicts with timestamp and value"""
-    return [{"timestamp": ts.isoformat(), "value": val} for ts, val in self._history]
+    with self._lock:
+      return [{"timestamp": stamp.isoformat(), "value": value} for stamp, value in self._history]
+
+  def intervals(self, start, end):
+    with self._lock:
+      samples = list(self._samples)
+      availability = list(self._availability)
+    boundaries = {start, end}
+    for stamp, _ in samples:
+      boundaries.update(value for value in (stamp, stamp + 60) if start < value < end)
+    boundaries.update(stamp for stamp, _ in availability if start < stamp < end)
+    ordered = sorted(boundaries)
+    result = []
+    for left, right in zip(ordered, ordered[1:]):
+      sample = next(((stamp, value) for stamp, value in reversed(samples) if stamp <= left), None)
+      connected = next((state for stamp, state in reversed(availability) if stamp <= left), False)
+      valid = connected and sample is not None and left < sample[0] + 60
+      result.append((left, right, sample[1] if valid else None))
+    return result
+
+  def shutdown(self, timeout=2):
+    self.started = False
+    self.connected = False
+
 
 class TestWaterflow(BaseWaterflow):
-  def __init__(self, logger, config):
-    BaseWaterflow.__init__(self, logger, config)
+  __test__ = False
+
+  def __init__(self, logger, config, clock=None):
+    super().__init__(logger, config, clock)
     self.exception = False
 
-  # Can be called multiple times. Make sure to initialize only once
   def start(self):
     if self.exception:
-      raise Exception("Test exception in waterflow.start()")
-
-    if self.started:
-      return
-
-    self.logger.info("TestWaterflow '%s' started." % self.type)
-    self.worker = threading.Thread(target=self.tickerThread, args=())
-    self.worker.daemon = True
-    self.worker.name = f"WtrFlwTh-{self.type}"
-    self.worker.start()
+      raise RuntimeError("Injected waterflow startup failure")
     self.started = True
+    self.connected = True
 
-  def tickerThread(self):
-    while True:
-      time.sleep(10)
-      _ = random.randint(0, 50)
-      if _ > 25:
-        _ = 0
-      self.setLastLiter_1m(_)
 
 class MqttWaterflow(BaseWaterflow):
-  def __init__(self, logger, config):
-    BaseWaterflow.__init__(self, logger, config)
+  def __init__(self, logger, config, clock=None, client_factory=None):
+    super().__init__(logger, config, clock)
+    self.client_factory = client_factory
+    self.mqttClient = None
     self.terminated = False
 
-  # Can be called multiple times. Make sure to initialize only once
   def start(self):
-    if self.started:
+    if self.started or not self.enabled:
       return
-
-    self.logger.info("MqttWaterflow '%s' connecting to '%s'..." % (self.type, self.config.hostname))
+    self.terminated = False
     try:
-      self.mqttClient = self.getMyMqtt()
+      self.mqttClient = (self.client_factory() if self.client_factory else
+                         client.Client(client.CallbackAPIVersion.VERSION1, self.config.clientname))
+      self.mqttClient.on_connect = self.on_connect
+      self.mqttClient.on_disconnect = self.on_disconnect
       self.mqttClient.on_message = self.on_message
-      worker = threading.Thread(target=self.mqttLooper, args=())
-      worker.daemon = True
-      worker.name = f"WtrFlwTh-{self.type}"
-      worker.start()
-      while not self.mqttClient.is_connected():
-        self.logger.info("Waiting for MqttWaterflow connection...")
-        time.sleep(1)
-      self.logger.info("MqttWaterflow connected: %s" % self.mqttClient.is_connected())
+      self.mqttClient.reconnect_delay_set(min_delay=1, max_delay=30)
+      self.mqttClient.connect_async(self.config.hostname)
+      result = self.mqttClient.loop_start()
+      if result not in (None, 0):
+        raise RuntimeError("MQTT flow loop failed to start: %s" % result)
       self.started = True
-    except Exception as ex:
-      self.logger.error("Error starting MqttWaterflow: %s" % format(ex))
+    except Exception:
+      self.last_error = "MQTT flow startup failed"
+      self.logger.exception(self.last_error)
+      self.shutdown()
+      raise
 
-  def getMyMqtt(self):
-    mqttClient = client.Client(client.CallbackAPIVersion.VERSION1, self.config.clientname)
-    mqttClient.user_data_set(self)
-    mqttClient.on_connect = self.on_connect
-    mqttClient.on_disconnect = self.on_disconnect
-    mqttClient.connect(self.config.hostname)
-    return mqttClient
-
-  def on_connect(self, client, userdata, flags, rc):
-    if rc == 0:
-      self.logger.info("MqttWaterflow connected to MQTT Broker. Subscribing to topic...")
-      # Re-subscribe on every connect/reconnect
-      self.mqttClient.subscribe(self.config.topic)
-      self.logger.info("MqttWaterflow subscribed to topic '%s'" % self.config.topic)
+  def on_connect(self, mqtt_client, userdata, flags, rc):
+    self.connected = rc == 0
+    if self.connected:
+      mqtt_client.subscribe(self.config.topic)
+      self.last_error = None
     else:
-      self.logger.error("MqttWaterflow failed to connect, return code %d" % rc)
+      self.last_error = "MQTT connection rejected: %s" % rc
+      self.logger.error(self.last_error)
 
-  def on_disconnect(self, client, userdata, rc):
-    if rc != 0:
-      self.logger.warning("MqttWaterflow connection lost unexpectedly (code: %d). Will attempt reconnection." % rc)
-    else:
-      self.logger.info("MqttWaterflow disconnected gracefully.")
+  def on_disconnect(self, mqtt_client, userdata, rc):
+    self.connected = False
+    if not self.terminated:
+      self.logger.warning("Waterflow MQTT connection lost (code %s)", rc)
 
-  def shutdown(self):
-    """Gracefully shutdown MQTT connection"""
-    self.terminated = True
-    if self.mqttClient:
-      try:
-        self.logger.info("MqttWaterflow shutting down MQTT connection...")
-        self.mqttClient.disconnect()
-      except Exception as ex:
-        self.logger.error("MqttWaterflow error during shutdown: %s" % format(ex))
-
-  def mqttLooper(self):
-    self.logger.info("MqttWaterflow '%s' thread started..." % self.type)
-    while not self.terminated:
-      try:
-        self.mqttClient.loop_forever(retry_first_connection=True)
-        # If we reach here, loop exited
-        if self.terminated:
-          break
-        self.logger.warning("MqttWaterflow loop exited, reconnecting...")
-        time.sleep(5)
-      except Exception as ex:
-        self.logger.error("MqttWaterflow loop exception: %s. Reconnecting..." % format(ex))
-        if self.terminated:
-          break
-        time.sleep(5)
-    self.logger.info("MqttWaterflow '%s' thread terminated" % self.type)
-
-  def on_message(self, client, userdata, msg):
-    self.logger.debug("MqttWaterflow received message: '%s' = %s" % (msg.topic, msg.payload))
+  def on_message(self, mqtt_client, userdata, msg):
     try:
-      self.setLastLiter_1m(float(msg.payload))
-    except Exception as ex:
-      self.logger.error("MqttWaterflow '%s' failed to parse payload. Topic '%s' = '%s'. Error message: '%s'" % (self.type, msg.topic, msg.payload, ex.message))
+      self.setLastLiter_1m(msg.payload)
+    except (ValueError, TypeError, OverflowError):
+      self.logger.error("Invalid waterflow reading on topic %s", msg.topic)
 
-class GpioWaterflow(BaseWaterflow):
-  def __init__(self, logger, config):
-    BaseWaterflow.__init__(self, logger, config)
+  def shutdown(self, timeout=2):
+    self.terminated = True
+    super().shutdown(timeout)
+    if self.mqttClient is not None:
+      from mqtt import stop_client
+      return stop_client(self.mqttClient, self.logger, timeout)
+    return True
 
-  # Can be called multiple times. Make sure to initialize only once
-  def start(self):
-    raise Exception("Not implemented.")
 
 def waterflowFactory(type, logger, config):
-  if type == 'mqtt':
+  if type == "mqtt":
     return MqttWaterflow(logger, config)
-
-  if type == 'gpio':
-    return GpioWaterflow(logger, config)
-
-  if type == 'test':
-    return TestWaterflow(logger, config)
+  raise ValueError("Unsupported production waterflow type: %s" % type)

@@ -1,4 +1,3 @@
-import time
 import requests
 from alert_channels.base import AlertChannel
 
@@ -28,6 +27,7 @@ class MillerBotChannel(AlertChannel):
         return "\n".join(lines)
 
     def send(self, alert) -> bool:
+        """Make one bounded attempt; the alert delivery worker owns retries."""
         message = self._format_message(alert)
         payload = {
             "user_id": self.user_id,
@@ -39,19 +39,11 @@ class MillerBotChannel(AlertChannel):
             "X-Api-Key": self.api_key,
         }
 
-        for attempt in range(5):
-            try:
-                response = requests.post(self.url, headers=headers, json=payload, timeout=10)
-                response.raise_for_status()
-                self.logger.info(f"MillerBot alert sent successfully: {alert.type.value}")
-                return True
-            except requests.exceptions.RequestException as e:
-                delay = 2 * (2 ** attempt)
-                if attempt < 4:
-                    self.logger.warning(
-                        f"MillerBot send failed (attempt {attempt + 1}/5), retrying in {delay}s: {e}"
-                    )
-                    time.sleep(delay)
-                else:
-                    self.logger.error(f"MillerBot send failed after 5 attempts: {e}")
-                    return False
+        try:
+            response = requests.post(self.url, headers=headers, json=payload, timeout=10)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as exc:
+            self.logger.warning(f"MillerBot send failed ({type(exc).__name__})")
+            return False
+        self.logger.info(f"MillerBot alert sent successfully: {alert.type.value}")
+        return True

@@ -1,140 +1,50 @@
-import time
-from test_base import init
-from test_base import assertValves
-from test_base import setStartTimeToNow
+from model import Job
+from test_base import runtime
 
-def test_sh_mqttQueue():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/queue/Test1/command", 0.2)
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(True, True), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  return irrigate, logger, valves, q, cfg
 
-def test_sh_mqttQueueDisabled():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  cfg.valves['Test1'].enabled = False
-  irrigate.start()
-  time.sleep(4)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/queue/Test1/command", 1)
-  time.sleep(4)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
+def test_queue_respects_concurrency_and_fifo(runtime):
+  for name in runtime.valves:
+    assert runtime.mqtt.processMessages("fixturePi/queue/%s/command" % name.replace(" ", "_"), b"1")
+  runtime.controller.tick()
+  assert runtime.valves["Valve A"].is_open
+  assert runtime.valves["Valve B"].is_open
+  assert not runtime.valves["Valve C"].is_open
+  runtime.clock.advance(60)
+  runtime.controller.tick()
+  assert runtime.valves["Valve C"].is_open
+  assert [action for action, _ in runtime.valves["Valve C"].calls] == ["close", "open"]
 
-def test_sh_mqttDisable():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/enabled/Test1/command", 0)
-  time.sleep(3)
-  irrigate.mqtt.processMessages("xxx/queue/Test1/command", 1)
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  irrigate.mqtt.processMessages("xxx/enabled/Test1/command", 1)
-  time.sleep(3)
-  irrigate.mqtt.processMessages("xxx/queue/Test1/command", 1)
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(True, True), (False, False), (False, False)])
-  assert len(q.queue) == 0
 
-def test_sh_mqttDisableAfterQueue():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  cfg.valves['Test1'].enabled = False
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
+def test_enabled_is_runtime_only_and_disabled_queue_never_opens(runtime):
+  assert runtime.mqtt.processMessages("fixturePi/enabled/Valve_A/command", b"0")
+  assert runtime.cfg.get_data()["valves"][0]["enabled"]
+  runtime.queueJob(Job(runtime.valves["Valve A"], 1, None))
+  runtime.controller.tick()
+  assert not any(action == "open" for action, _ in runtime.valves["Valve A"].calls)
+  runtime.mqtt.processMessages("fixturePi/enabled/Valve_A/command", b"1")
+  runtime.queueJob(Job(runtime.valves["Valve A"], 1, None))
+  runtime.controller.tick()
+  assert runtime.valves["Valve A"].is_open
 
-def test_sh_mqttQueue2():
-  irrigate, logger, valves, q, cfg = test_sh_mqttQueue()
-  irrigate.mqtt.processMessages("xxx/queue/Test2/command", 0.2)
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(True, True), (True, True), (False, False)])
-  assert len(q.queue) == 0
-  return irrigate, logger, valves, q, cfg
 
-def test_mqttQueue3():
-  irrigate, logger, valves, q, cfg = test_sh_mqttQueue2()
-  irrigate.mqtt.processMessages("xxx/queue/Test3/command", 1)
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(True, True), (True, True), (False, False)])
-  assert len(q.queue) == 1
-  time.sleep(10)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (True, True)])
-  assert len(q.queue) == 0
+def test_forceclose_cancels_paused_job_without_clearing_pending(runtime):
+  sensor = runtime.sensors["Weather"]
+  valve = runtime.valves["Valve A"]
+  sensor.disable = True
+  runtime.queueJob(Job(valve, 1, valve.schedules[0]))
+  runtime.controller.tick()
+  runtime.queueJob(Job(runtime.valves["Valve C"], 2, None))
+  assert runtime.mqtt.processMessages("fixturePi/forceclose/Valve_A/command", b"legacy trigger")
+  sensor.disable = False
+  runtime.controller.tick()
+  assert not any(action == "open" for action, _ in valve.calls)
+  assert runtime.valves["Valve C"].is_open
 
-def test_sh_mqttDisableWhileInQueue():
-  irrigate, logger, valves, q, cfg = test_sh_mqttQueue2()
-  irrigate.mqtt.processMessages("xxx/queue/Test3/command", 1)
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(True, True), (True, True), (False, False)])
-  assert len(q.queue) == 1
-  cfg.valves['Test1'].enabled = False
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (True, True), (True, True)])
-  assert len(q.queue) == 0
 
-# Test removed: test_sh_mqttSuspend
-# Suspend functionality has been removed from the system
-
-def test_sh_sensorOverridesMqtt():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, 'Test5')
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  cfg.valves['Test4'].schedules.clear()
-  cfg.valves['Test5'].sensor.disable = True
-  irrigate.start()
-  time.sleep(3)
-  # Should be handled but not opened
-  assertValves(valves, ['Test5'], [(True, False)])
-
-  # Sensor is disabling - valve stays closed
-  time.sleep(3)
-  assertValves(valves, ['Test5'], [(True, False)])
-
-  cfg.valves['Test5'].sensor.disable = False
-  time.sleep(3)
-  # Should open because the sensor is now enabled
-  assertValves(valves, ['Test5'], [(True, True)])
-
-def test_sh_mqttErrors():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, 'Test1', duration=0.5)
-  setStartTimeToNow(cfg, 'Test2', deltaInMinutes=10)
-  assertValves(valves, ['Test1', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.start()
-  time.sleep(2)
-  irrigate.mqtt.processMessages("xxx/queue/Test1/command", "asd")
-  time.sleep(1)
-  irrigate.mqtt.processMessages("xxx/enable/Test1/command", "")
-  time.sleep(1)
-  irrigate.mqtt.processMessages("xxx/enable/Test1/command", 4)
-  time.sleep(1)
-  irrigate.mqtt.processMessages("xxx/enable/asd/command", 4)
-  time.sleep(1)
-  irrigate.mqtt.processMessages("xxx/enable/valve786/command", 4)
-  time.sleep(1)
-  irrigate.mqtt.processMessages("", "")
-  time.sleep(1)
-  irrigate.mqtt.processMessages("/", 4)
-  time.sleep(30)
-  assert valves['Test1'].secondsDaily == 30
+def test_malformed_commands_do_not_actuate(runtime):
+  before = {name: list(valve.calls) for name, valve in runtime.valves.items()}
+  for topic, payload in [("", b"1"), ("/", b"1"), ("fixturePi/enabled/Valve_A/command", b"4"),
+                         ("fixturePi/queue/Valve_A/command", b"nan"),
+                         ("fixturePi/forceopen/unknown/command", b"1")]:
+    assert not runtime.mqtt.processMessages(topic, payload)
+  assert {name: valve.calls for name, valve in runtime.valves.items()} == before

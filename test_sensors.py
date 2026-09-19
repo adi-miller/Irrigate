@@ -1,98 +1,45 @@
-import time
-from test_base import init
-from test_base import assertValves
-from test_base import setStartTimeToNow
+from model import Job
+from test_base import runtime
 
-def test_sh_sensorOnOff():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, 'Test5')
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['Test5'], [(True, True)])
-  cfg.valves['Test5'].sensor.disable = True
-  time.sleep(3)
-  assertValves(valves, ['Test5'], [(True, False)])
-  cfg.valves['Test5'].sensor.disable = False
-  time.sleep(3)
-  assertValves(valves, ['Test5'], [(True, True)])
 
-def test_sh_sensorFactor():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, 'Test6')
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  cfg.valves['Test6'].sensor.uv = 0.5
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['Test6'], [(True, True)])
-  time.sleep(15)
-  assertValves(valves, ['Test6'], [(False, False)])
-  assert valves['Test6'].secondsDaily == 12
+def test_fresh_sensor_pause_and_resume_keep_deadline(runtime):
+  valve = runtime.valves["Valve A"]
+  runtime.queueJob(Job(valve, 1, valve.schedules[0]))
+  runtime.controller.tick()
+  deadline = runtime.controller.operations[valve.name].deadline
+  runtime.clock.advance(10)
+  runtime.sensors["Weather"].disable = True
+  runtime.controller.tick()
+  assert not valve.is_open
+  assert valve.handled
+  runtime.clock.advance(10)
+  runtime.sensors["Weather"].disable = False
+  runtime.controller.tick()
+  assert valve.is_open
+  assert runtime.controller.operations[valve.name].deadline == deadline
 
-def test_sh_sensorIgnoredOnMqttQueue():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3', 'Test5'], [(False, False), (False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/queue/Test5/command", 1)
-  time.sleep(3)
-  assertValves(valves, ['Test5'], [(True, True)])
-  cfg.valves['Test5'].sensor.disable = True
-  time.sleep(3)
-  assertValves(valves, ['Test5'], [(True, True)])
 
-def test_sh_mqttQueueOnSensorDisabled():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  cfg.valves['Test5'].sensor.disable = True
-  irrigate.start()
-  time.sleep(3)
-  assertValves(valves, ['Test1', 'Test2', 'Test3', 'Test5'], [(False, False), (False, False), (False, False), (False, False)])
-  assert len(q.queue) == 0
-  irrigate.mqtt.processMessages("xxx/queue/Test5/command", 1)
-  time.sleep(3)
-  assertValves(valves, ['Test5'], [(True, True)])
+def test_adhoc_queue_ignores_schedule_sensor(runtime):
+  valve = runtime.valves["Valve A"]
+  runtime.sensors["Weather"].disable = True
+  runtime.queueJob(Job(valve, 1, None))
+  runtime.controller.tick()
+  assert valve.is_open
 
-def test_sh_scheduleSensorShouldDisable():
-  # This test validates that when the sensor is ShouldDisable, then the valve doesn't even open initially
-  # (this needs to be verified by viewing the logs), but does get queued so that if the sensor turns to
-  # ShouldDisable == False, then the valve opens.
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  cfg.valves['Test4'].schedules.clear()
-  setStartTimeToNow(cfg, 'Test5')
-  cfg.valves['Test5'].sensor.disable = True
-  irrigate.start()
-  time.sleep(5)
-  assertValves(valves, ['Test4', 'Test2', 'Test3'], [(False, False), (False, False), (False, False)])
-  cfg.valves['Test5'].sensor.disable = False
-  time.sleep(5)
-  assert valves['Test5'].secondsDaily <= 5
 
-def test_sh_badSensor():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, 'Test5', duration=0.1)
-  cfg.valves['Test1'].schedules.clear()
-  cfg.valves['Test2'].schedules.clear()
-  cfg.valves['Test3'].schedules.clear()
-  sensor = cfg.valves['Test5'].sensor
-  sensor.exception = False
-  irrigate.start()
+def test_uv_factor_and_unavailable_base_duration(runtime, caplog):
+  valve = runtime.valves["Valve A"]
+  schedule = valve.schedules[0]
+  schedule.enable_uv_adjustments = True
+  sensor = runtime.sensors["Weather"]
+  sensor.uv = 1
+  assert runtime.calculateJobDuration(valve, schedule) == 1
   sensor.exception = True
-  time.sleep(2)
-  assertValves(valves, ['Test5'], [(True, True)])
-  time.sleep(7)
-  assertValves(valves, ['Test5'], [(False, False)])
-  assert valves['Test5'].secondsDaily >= 5
+  assert runtime.calculateJobDuration(valve, schedule) == 5
+  assert "Using base duration" in caplog.text
+  runtime.queueJob(Job(valve, 1, schedule))
+  runtime.controller.tick()
+  assert valve.is_open
+  runtime.clock.advance(60)
+  runtime.controller.tick()
+  assert not valve.is_open

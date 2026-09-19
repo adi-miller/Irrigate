@@ -265,17 +265,31 @@ header h1 {
 }
 
 .system-status {
-    display: none; /* Hidden by default, shown only when status is not OK */
+    display: flex;
     align-items: center;
     gap: 0.5rem;
     font-size: 0.85rem;
-    background: rgba(255, 255, 255, 0.85);
-    padding: 0.4rem 0.8rem;
-    border-radius: var(--radius);
-    backdrop-filter: blur(10px);
-    border: 1px solid var(--gray-300);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    height: 32px;
+    background: #f1f8e9;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--gray-300);
+    min-height: 40px;
+    line-height: 1.4;
+}
+
+.system-status.warning {
+    background: #fff3e0;
+}
+
+.system-status.error {
+    background: #ffebee;
+}
+
+.system-status .status-indicator {
+    flex-shrink: 0;
+}
+
+.waterflow-history-bar.stale .waterflow-chart {
+    opacity: 0.35;
 }
 
 .waterflow-status {
@@ -296,6 +310,12 @@ header h1 {
     background: rgba(33, 150, 243, 0.85);
     border-color: rgba(33, 150, 243, 0.8);
     color: white;
+}
+
+.waterflow-status.unavailable {
+    background: #fff3e0;
+    border-color: #ffb74d;
+    color: #795548;
 }
 
 .waterflow-status.leak {
@@ -510,9 +530,21 @@ main {
     color: #c62828;
 }
 
-.valve-status-badge.malfunction {
+.valve-status-badge.malfunction,
+.valve-status-badge.fault {
     background: #ffebee;
     color: #b71c1c;
+}
+
+.valve-status-badge.paused,
+.valve-status-badge.waiting,
+.valve-status-badge.unknown {
+    background: #fff3e0;
+    color: #795548;
+}
+
+.valve-status-badge.stale {
+    opacity: 0.65;
 }
 
 .valve-info {
@@ -591,6 +623,15 @@ main {
     height: 100%;
     background: linear-gradient(90deg, var(--primary) 0%, var(--primary-dark) 100%);
     transition: width 1s linear;
+}
+
+.valve-card:has(.valve-status-badge.paused) .progress-fill {
+    background: var(--warning);
+}
+
+.valve-card:has(.valve-status-badge.stale) .progress-fill {
+    opacity: 0.5;
+    transition: none;
 }
 
 .valve-actions {
@@ -680,6 +721,21 @@ main {
     opacity: 0.5;
     cursor: not-allowed;
     transform: none !important;
+}
+
+[data-config-write]:disabled,
+[data-config-write]:disabled + .toggle-slider {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.schedule-draft {
+    border: 1px dashed var(--primary);
+}
+
+.schedule-draft-note {
+    margin-bottom: 1rem;
+    color: var(--gray-600);
 }
 
 .btn-primary {

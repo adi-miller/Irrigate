@@ -68,12 +68,12 @@
         "idle_interval": {
           "type": "number",
           "minimum": 0,
-          "description": "Telemetry interval when idle (seconds)"
+          "description": "Telemetry interval when idle (minutes); zero reports on every eligible loop"
         },
         "active_interval": {
           "type": "number",
           "minimum": 0,
-          "description": "Telemetry interval when active (seconds)"
+          "description": "Telemetry interval when active (minutes); zero reports on every eligible loop"
         }
       },
       "allOf": [
@@ -91,13 +91,15 @@
     "sensors": {
       "type": "array",
       "description": "Weather/environmental sensors",
+      "default": [],
       "items": {
         "type": "object",
-        "required": ["type", "name", "enabled", "precipitation"],
+        "required": ["type", "name", "enabled"],
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["openweathermap"]
+            "enum": ["openweathermap", "test"],
+            "description": "The test type requires an explicitly injected sensor factory"
           },
           "name": {
             "type": "string",
@@ -107,7 +109,8 @@
             "type": "boolean"
           },
           "api_key": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "latitude": {
             "type": "number",
@@ -121,20 +124,24 @@
           },
           "precipitation": {
             "type": "object",
+            "default": {"days_to_aggregate": 3, "disable_threshold_mm": 1.0},
             "properties": {
               "days_to_aggregate": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "default": 3
               },
               "disable_threshold_mm": {
                 "type": "number",
-                "minimum": 0
+                "minimum": 0,
+                "default": 1.0
               }
             },
             "additionalProperties": false
           },
           "uv_adjustments": {
             "type": "array",
+            "default": [],
             "items": {
               "type": "object",
               "required": ["max_uv_index", "multiplier"],
@@ -145,22 +152,31 @@
                 },
                 "multiplier": {
                   "type": "number",
-                  "minimum": 0
+                  "minimum": 0,
+                  "description": "Zero suppresses UV-adjusted scheduling. Positive multipliers must produce finite, timedelta-representable durations for every referencing UV-enabled schedule."
                 }
               },
               "additionalProperties": false
             }
           }
+        },
+        "if": {
+          "properties": {"type": {"const": "openweathermap"}}
+        },
+        "then": {
+          "required": ["api_key", "latitude", "longitude"]
         }
       }
     },
     "waterflow": {
       "type": "object",
       "description": "Water flow monitoring configuration",
-      "required": ["type", "enabled"],
+      "required": ["type", "enabled", "leakdetection"],
       "properties": {
         "type": {
-          "type": "string"
+          "type": "string",
+          "enum": ["mqtt", "test"],
+          "description": "GPIO flow monitoring is not implemented; test requires an explicitly injected factory"
         },
         "enabled": {
           "type": "boolean"
@@ -169,14 +185,23 @@
           "type": "boolean"
         },
         "hostname": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "clientname": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "topic": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
+      },
+      "if": {
+        "properties": {"type": {"const": "mqtt"}}
+      },
+      "then": {
+        "required": ["hostname", "clientname", "topic"]
       },
       "additionalProperties": false
     },
@@ -187,22 +212,54 @@
       "properties": {
         "enabled": {
           "type": "object",
+          "default": {},
           "properties": {
-            "leak": {"type": "boolean"},
-            "malfunction_no_flow": {"type": "boolean"},
-            "irregular_flow": {"type": "boolean"},
-            "sensor_error": {"type": "boolean"},
-            "system_exit": {"type": "boolean"}
+            "leak": {"type": "boolean", "default": true},
+            "malfunction_no_flow": {"type": "boolean", "default": true},
+            "irregular_flow": {"type": "boolean", "default": true},
+            "sensor_error": {"type": "boolean", "default": true},
+            "system_exit": {"type": "boolean", "default": true},
+            "safety_intervention": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable critical safety intervention alerts"
+            },
+            "actuation_failure": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable critical valve actuation failure alerts"
+            },
+            "monitoring_unavailable": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable warning alerts when monitoring is unavailable"
+            }
           },
           "additionalProperties": false
         },
         "leak_repeat_minutes": {
           "type": "number",
-          "minimum": 0
+          "minimum": 0,
+          "default": 15
         },
         "irregular_flow_threshold": {
           "type": "number",
-          "minimum": 0
+          "minimum": 0,
+          "default": 2.0
+        },
+        "valve_overrides": {
+          "type": "object",
+          "description": "Per-valve alert settings, keyed by an existing valve name",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "irregular_flow_threshold": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
         },
         "channels": {
           "type": "array",
@@ -242,9 +299,10 @@
         },
         "leak_detection_exclusions": {
           "type": "array",
+          "default": [],
           "items": {
             "type": "object",
-            "required": ["time_based_on"],
+            "required": ["time_based_on", "duration"],
             "properties": {
               "time_based_on": {
                 "type": "string",
@@ -258,11 +316,13 @@
                 "type": "integer"
               },
               "duration": {
-                "type": "integer",
-                "minimum": 1
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Finite positive duration in minutes, including fractional minutes, representable by datetime.timedelta; no implicit default"
               },
               "days": {
                 "type": "array",
+                "default": [],
                 "items": {
                   "type": "string",
                   "enum": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -270,6 +330,7 @@
               },
               "seasons": {
                 "type": "array",
+                "default": [],
                 "items": {
                   "type": "string",
                   "enum": ["Spring", "Summer", "Fall", "Winter"]
@@ -317,7 +378,8 @@
           },
           "type": {
             "type": "string",
-            "enum": ["2wire", "3wire"]
+            "enum": ["3wire", "test"],
+            "description": "2-wire valves are not implemented; test requires an explicitly injected factory"
           },
           "gpio_on_pin": {
             "type": "integer",
@@ -327,16 +389,22 @@
             "type": "integer",
             "minimum": 0
           },
+          "pulse_duration": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Positive pulse duration in seconds; the 3-wire driver limits pulses to 200 ms"
+          },
           "watering_mode": {
             "type": "string",
-            "enum": ["duration", "volume"]
+            "enum": ["duration"],
+            "description": "Volume-based watering is not implemented"
           },
           "sensor": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "schedules": {
             "type": "array",
-            "minItems": 1,
             "items": {
               "type": "object",
               "required": ["time_based_on", "duration"],
@@ -348,19 +416,20 @@
                 "fixed_start_time": {
                   "type": "string",
                   "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
-                  "description": "Time in HH:MM format"
+                  "description": "Time in H:MM or HH:MM format"
                 },
                 "offset_minutes": {
                   "type": "integer",
                   "description": "Offset from sunrise/sunset in minutes"
                 },
                 "duration": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "description": "Duration in minutes"
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "description": "Finite positive duration in minutes, including fractional minutes, representable by datetime.timedelta; no 30-minute schedule cap"
                 },
                 "days": {
                   "type": "array",
+                  "default": [],
                   "items": {
                     "type": "string",
                     "enum": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -368,13 +437,15 @@
                 },
                 "seasons": {
                   "type": "array",
+                  "default": [],
                   "items": {
                     "type": "string",
                     "enum": ["Spring", "Summer", "Fall", "Winter"]
                   }
                 },
                 "enable_uv_adjustments": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "default": false
                 }
               },
               "allOf": [
@@ -398,6 +469,12 @@
               "additionalProperties": false
             }
           }
+        },
+        "if": {
+          "properties": {"type": {"const": "3wire"}}
+        },
+        "then": {
+          "required": ["gpio_on_pin", "gpio_off_pin"]
         },
         "additionalProperties": false
       }

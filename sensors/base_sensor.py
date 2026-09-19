@@ -1,72 +1,72 @@
-class BaseSensor():
-  def __init__(self, logger, config):
+from clock import SystemClock
+from scheduling import uv_factor
+
+
+class SensorUnavailable(RuntimeError):
+  pass
+
+
+class BaseSensor:
+  def __init__(self, logger, config, clock=None):
     self.name = config.name
     self.logger = logger
     self.config = config
+    self.clock = clock or SystemClock()
     self.enabled = config.enabled
-    self.disable = False
-    self.uv = 10.2
-    self.exception = False
     self.started = False
-    self.uv_adjustments = config.uv_adjustments if hasattr(config, 'uv_adjustments') else []
+    self.uv_adjustments = getattr(config, "uv_adjustments", [])
 
-  def getFactor(self):
-    """Default implementation returns 1.0 (no adjustment)"""
-    return 1.0
+  def shutdown(self, timeout=2):
+    self.started = False
+
 
 class TestSensor(BaseSensor):
-  # Can be called multiple times. Make sure to initialize only once
+  __test__ = False
+
+  def __init__(self, logger, config, clock=None):
+    super().__init__(logger, config, clock)
+    self.type = "OpenWeatherMap"
+    self.exception = False
+    self.disable = False
+    self.uv = 2.5
+    self.recentPrecip = 0.0
+    self.precip_days = getattr(getattr(config, "precipitation", None), "days_to_aggregate", 3)
+    self.precip_threshold = getattr(getattr(config, "precipitation", None), "disable_threshold_mm", 1.0)
+    self.revision = 1
+
   def start(self):
     if self.exception:
-      raise Exception("Test exception in sensor.start()")
-
-    if self.started:
-      return
-
+      raise SensorUnavailable("Injected sensor startup failure")
     self.started = True
-    self.logger.info("Sensor Test started.")
 
-  # This method is called every 0.5 seconds while the valve is open, so
-  # it must return quickly. If any long processing is needed, it should
-  # be executed in a thread and stored to be fetched quickly by this call.
+  def _check(self):
+    if self.exception or not self.started:
+      raise SensorUnavailable("Simulated weather unavailable")
+
   def shouldDisable(self):
-    if self.exception:
-      raise Exception("Test exception in sensor.shouldDisable()")
-
-    return self.disable
+    self._check()
+    return self.disable or self.recentPrecip > self.precip_threshold
 
   def getUv(self):
-    if self.exception:
-      raise Exception("Test exception in sensor.getUv()")
-
+    self._check()
     return self.uv
 
   def getFactor(self):
-    """Calculate factor based on UV adjustments configuration"""
-    if self.exception:
-      raise Exception("Test exception in sensor.getFactor()")
-    
-    if not self.uv_adjustments:
-      return 1.0
-    
-    uv = self.uv
-    for adj in self.uv_adjustments:
-      if uv <= adj.max_uv_index:
-        return adj.multiplier
-    
-    return self.uv_adjustments[-1].multiplier
+    return uv_factor(self.getUv(), self.uv_adjustments)
 
-  def getTelemetry(self):
-    testTelemetry = []
-    testTelemetry["num/value"] = 42
-    testTelemetry["color"] = "black"
-    testTelemetry["bool/value"] = True
-    return testTelemetry
+  def getTelemetry(self, forced=False):
+    self._check()
+    return {"uv": self.uv, "recentPrecip": self.recentPrecip}
+
+  def get_health(self):
+    available = self.enabled and self.started and not self.exception
+    return {"name": self.name, "enabled": self.enabled, "available": available,
+            "fresh": available, "age_seconds": 0.0 if available else None,
+            "reason": None if available else "simulated weather unavailable"}
+
 
 def sensorFactory(type, logger, config):
-  if type == 'test':
-    return TestSensor(logger, config)
-
-  if type == 'openweathermap':
+  if type == "openweathermap":
     from sensors.openweathermap_sensor import OpenWeatherMapSensor
     return OpenWeatherMapSensor(logger, config)
+  raise ValueError("Unsupported production sensor type: %s" % type)

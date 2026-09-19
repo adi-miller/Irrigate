@@ -1,952 +1,665 @@
-import uvicorn
-import model
-import pytz
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from schedule_simulator import ScheduleSimulator
+import copy
+import logging
+import math
+import threading
 from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytz
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from suntime import Sun
-import time
+
+import model
+from alerts import AlertType
+from controller import ControlError
+from schedule_simulator import ScheduleSimulator
+from scheduling import uv_factor
+from sensors.base_sensor import SensorUnavailable
+
 
 app = FastAPI(title="Irrigate API", version="1.0.0")
-
-# Global reference to Irrigate instance
 irrigate_instance = None
+next_runs_cache = {"data": None, "timestamp": 0, "ttl": 300}
+_cache_lock = threading.Lock()
+_cache_generation = 0
+_cache_instance = None
+_LEGACY_ALERT_FLAGS = (
+    "leak", "malfunction_no_flow", "irregular_flow", "sensor_error", "system_exit",
+)
+_WEB_DIRECTORY = Path(__file__).resolve().parent / "web"
 
-# Cache for next scheduled runs
-# Structure: {"data": {...}, "timestamp": float, "ttl": int}
-next_runs_cache = {"data": None, "timestamp": 0, "ttl": 300}  # 5 minute TTL
+
+def _instance():
+    if irrigate_instance is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    return irrigate_instance
+
+
+def _valve(instance, name):
+    if name not in instance.valves:
+        raise HTTPException(status_code=404, detail=f"Valve '{name}' not found")
+    return instance.valves[name]
+
+
+def _candidate_valve(candidate, name):
+    for valve in candidate["valves"]:
+        if valve["name"] == name:
+            return valve
+    raise HTTPException(status_code=404, detail=f"Valve '{name}' not found")
+
+
+def _local_now(instance):
+    return instance.clock.now().astimezone(pytz.timezone(instance.cfg.timezone))
+
+
+@app.exception_handler(RequestValidationError)
+async def log_request_validation_error(request: Request, exc: RequestValidationError):
+    logger = irrigate_instance.logger if irrigate_instance is not None else logging.getLogger("Irrigate.API")
+    route = request.scope.get("route")
+    # Route templates and error counts are safe; raw input, bodies and URLs are not.
+    logger.warning(
+        "API request validation rejected: route=%s errors=%s",
+        getattr(route, "path", "<unmatched>"), len(exc.errors()),
+    )
+    return await request_validation_exception_handler(request, exc)
+
+
+def _control_error(instance, error):
+    instance.logger.warning("API control request rejected (status %s)", error.status_code)
+    raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+
+async def _run_control(instance, action, *args):
+    try:
+        return await run_in_threadpool(action, *args)
+    except ControlError as error:
+        _control_error(instance, error)
+    except Exception as error:
+        instance.logger.error("API control action failed (%s)", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Control action failed; see system health") from error
+
+
+async def _update_config(instance, mutator, *, enabled_updates=None):
+    try:
+        if enabled_updates is None:
+            result = await run_in_threadpool(instance.update_config, mutator)
+        else:
+            result = await run_in_threadpool(
+                instance.update_config, mutator, enabled_updates=enabled_updates,
+            )
+    except HTTPException:
+        raise
+    except ControlError as error:
+        _control_error(instance, error)
+    except ValueError as error:
+        instance.logger.warning("API configuration candidate rejected (%s)", type(error).__name__)
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        instance.logger.error("API configuration update failed (%s)", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Configuration update failed; see system health") from error
+    invalidate_next_runs_cache()
+    return result
+
+
+def _boolean(value, name):
+    if type(value) is not bool:
+        raise HTTPException(status_code=400, detail=f"{name} must be a boolean")
+    return value
+
+
+def _number(value, conversion):
+    try:
+        if isinstance(value, bool):
+            raise ValueError("Boolean is not a numeric setting")
+        number = conversion(value)
+        if not math.isfinite(number):
+            raise ValueError("Numeric settings must be finite")
+        return number
+    except (ValueError, TypeError, OverflowError) as error:
+        raise HTTPException(status_code=400, detail="Invalid numeric setting value") from error
+
 
 def invalidate_next_runs_cache():
-    """Invalidate the next scheduled runs cache"""
-    global next_runs_cache
-    next_runs_cache["timestamp"] = 0
-    next_runs_cache["data"] = None
+    global _cache_generation, _cache_instance
+    with _cache_lock:
+        next_runs_cache["timestamp"] = 0
+        next_runs_cache["data"] = None
+        _cache_generation += 1
+        _cache_instance = None
+
+
+def _cache_valid(instance):
+    age = instance.clock.monotonic() - next_runs_cache["timestamp"]
+    return (
+        _cache_instance is instance and next_runs_cache["data"] is not None
+        and 0 <= age < next_runs_cache["ttl"]
+    )
 
 
 def is_cache_valid():
-    """Check if the next runs cache is still valid"""
-    if next_runs_cache["data"] is None:
+    if irrigate_instance is None:
         return False
-    age = time.time() - next_runs_cache["timestamp"]
-    return age < next_runs_cache["ttl"]
+    with _cache_lock:
+        return _cache_valid(irrigate_instance)
 
 
 def get_next_scheduled_runs():
-    global next_runs_cache
-    
-    if is_cache_valid():
-        return next_runs_cache["data"]
-    
-    result = {}
-    
+    global _cache_instance
+    instance = _instance()
+    with _cache_lock:
+        if _cache_valid(instance):
+            return copy.deepcopy(next_runs_cache["data"])
+        generation = _cache_generation
     try:
-        tz = pytz.timezone(irrigate_instance.cfg.timezone)
-        now = tz.localize(datetime.now())
-        tomorrow = now + timedelta(days=1)
-        tomorrow_midnight = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        all_jobs = []
-        
-        # Simulation 1: Today from now onwards
-        simulator_today = ScheduleSimulator(irrigate_instance)
-        simulator_today.override_time = now.time()
-        jobs_today = simulator_today.get_scheduled_jobs_for_simulation()
-        all_jobs.extend(jobs_today)
-        
-        # Simulation 2: Next 6 full days (tomorrow through day 6)
-        simulator_future = ScheduleSimulator(irrigate_instance)
-        simulator_future.simulate_days = 6
-        simulator_future.override_date = tomorrow_midnight.date()
-        simulator_future.override_time = tomorrow_midnight.time()
-        jobs_future = simulator_future.get_scheduled_jobs_for_simulation()
-        all_jobs.extend(jobs_future)
-        
-        # Find the earliest job for each valve
-        for job in all_jobs:
-            valve_name = job['valve_name']
-            schedule_time = job['schedule_time']
-            
-            # Find the schedule index in the valve's schedules
-            valve = job['valve']
-            schedule_obj = job['schedule']
-            schedule_index = 0
-            for idx, sched in enumerate(valve.schedules):
-                if sched is schedule_obj:
-                    schedule_index = idx
-                    break
-            
-            # Only keep the earliest run for each valve
-            if valve_name not in result or schedule_time < result[valve_name]['schedule_time']:
-                result[valve_name] = {
-                    'schedule_time': schedule_time,
-                    'schedule_time_iso': schedule_time.isoformat(),
-                    'duration_minutes': job['duration_minutes'],
-                    'schedule_index': schedule_index
+        now = _local_now(instance)
+        today = ScheduleSimulator(instance)
+        today.override_date = now.date()
+        today.override_time = now.time()
+        future = ScheduleSimulator(instance)
+        future.simulate_days = 6
+        future.override_date = (now + timedelta(days=1)).date()
+        future.override_time = now.replace(hour=0, minute=0, second=0, microsecond=0).time()
+        jobs = today.get_scheduled_jobs_for_simulation() + future.get_scheduled_jobs_for_simulation()
+        result = {}
+        for job in jobs:
+            name, scheduled = job["valve_name"], job["schedule_time"]
+            index = job.get("schedule_index")
+            if index is None:
+                index = next(
+                    (i for i, schedule in enumerate(job["valve"].schedules) if schedule is job["schedule"]), 0,
+                )
+            if name not in result or scheduled < result[name]["schedule_time"]:
+                result[name] = {
+                    "schedule_time": scheduled,
+                    "schedule_time_iso": scheduled.isoformat(),
+                    "duration_minutes": job["duration_minutes"],
+                    "schedule_index": index,
                 }
-        
-        # Update cache
-        next_runs_cache["data"] = result
-        next_runs_cache["timestamp"] = time.time()
-        
+        with _cache_lock:
+            if generation == _cache_generation and irrigate_instance is instance:
+                next_runs_cache["data"] = copy.deepcopy(result)
+                next_runs_cache["timestamp"] = instance.clock.monotonic()
+                _cache_instance = instance
         return result
-        
-    except Exception as ex:
-        irrigate_instance.logger.error(f"Error calculating next scheduled runs: {ex}")
-        import traceback
-        irrigate_instance.logger.error(traceback.format_exc())
-        return {}
+    except Exception as error:
+        instance.logger.error("Next-run prediction failed (%s)", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Unable to calculate next scheduled runs") from error
+
+
+def _weather_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SensorUnavailable("Weather reading is not numeric")
+    if not math.isfinite(value) or value < 0:
+        raise SensorUnavailable("Weather reading is invalid")
+    return value
+
+
+def _sensor_projection(name, sensor, full_status=False):
+    result = {
+        "name": name, "type": getattr(sensor, "type", "unknown"),
+        "enabled": getattr(sensor, "enabled", False),
+    }
+    try:
+        if callable(getattr(sensor, "snapshot", None)):
+            observation = sensor.snapshot()
+            uv = _weather_number(observation["uv"])
+            precipitation = _weather_number(observation["recentPrecip"])
+            values = {
+                "should_disable": precipitation > sensor.precip_threshold,
+                "factor": uv_factor(uv, getattr(sensor, "uv_adjustments", [])),
+                "telemetry": {"uv": uv, "recentPrecip": precipitation},
+            }
+        else:
+            if not all(callable(getattr(sensor, method, None)) for method in (
+                "shouldDisable", "getFactor", "getTelemetry",
+            )):
+                raise SensorUnavailable("Sensor does not expose a complete reading")
+            values = {
+                "should_disable": sensor.shouldDisable(),
+                "factor": sensor.getFactor(),
+                "telemetry": sensor.getTelemetry(True) if full_status else sensor.getTelemetry(),
+            }
+            for key in ("uv", "recentPrecip"):
+                if key in values["telemetry"]:
+                    _weather_number(values["telemetry"][key])
+        if not math.isfinite(values["factor"]):
+            raise SensorUnavailable("Weather factor is invalid")
+        result.update(values)
+    except Exception:
+        if full_status:
+            result.update(should_disable=None, factor=None, telemetry={})
+        result["error"] = True
+    return result
+
+
+def _waterflow_projection(flow):
+    result = {
+        "enabled": False, "type": None, "flow_rate_lpm": 0, "is_active": False,
+        "leak_detection_enabled": False, "last_update": None, "history": [],
+    }
+    if flow is None:
+        return result
+    result.update(
+        enabled=flow.enabled, type=flow.type, leak_detection_enabled=flow.leakdetection,
+    )
+    if flow.started:
+        observation = flow.snapshot()
+        value = observation["value"]
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        result["flow_rate_lpm"] = round(value, 2) if valid else 0
+        result["is_active"] = valid and value > 0
+        timestamp = observation["timestamp"]
+        result["last_update"] = timestamp.isoformat() if timestamp is not None else None
+        result["history"] = flow.getHistory()
+    return result
 
 
 @app.get("/api/status")
 async def get_full_status():
-    """Get complete system status"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    # Return raw properties - let the UI determine status strings
-    valves = []
-    for name, v in irrigate_instance.valves.items():
-        valves.append({
-            "name": name,
-            "enabled": v.enabled,
-            "is_open": v.is_open,
-            "handled": v.handled,
-            "seconds_daily": v.secondsDaily,
-            "liters_daily": v.litersDaily,
-            "seconds_remain": v.secondsRemain,
-            "seconds_duration": getattr(v, 'secondsDuration', 0),  # Total job duration
-            "seconds_last": v.secondsLast if hasattr(v, 'secondsLast') else 0,
-            "liters_last": v.litersLast if hasattr(v, 'litersLast') else 0,
-        })
-    
-    sensors = []
-    for name, s in irrigate_instance.sensors.items():
-        sensor_data = {
-            "name": name,
-            "type": s.type if hasattr(s, 'type') else "unknown",
-            "enabled": s.enabled if hasattr(s, 'enabled') else False,
-        }
-        
-        # Try to get sensor methods (may fail if sensor has errors)
-        try:
-            sensor_data["should_disable"] = s.shouldDisable() if hasattr(s, 'shouldDisable') else False
-            sensor_data["factor"] = s.getFactor() if hasattr(s, 'getFactor') else 1.0
-            sensor_data["telemetry"] = s.getTelemetry(True) if hasattr(s, 'getTelemetry') else {}
-        except Exception:
-            sensor_data["should_disable"] = None
-            sensor_data["factor"] = None
-            sensor_data["telemetry"] = {}
-            sensor_data["error"] = True
-        
-        sensors.append(sensor_data)
-    
-    # Calculate current time info, season, and sunrise/sunset
-    tz = pytz.timezone(irrigate_instance.cfg.timezone)
-    now = datetime.now(tz)
-    lat, lon = irrigate_instance.cfg.getLatLon()
-    season = irrigate_instance.getSeason(lat, now)
-    
-    # Calculate sunrise and sunset
+    """Return the legacy status projection without consuming observations."""
+    instance = _instance()
+    valves = instance.controller.snapshot()
+    sensors = [_sensor_projection(name, sensor, True) for name, sensor in instance.sensors.items()]
+    now = _local_now(instance)
+    tz = pytz.timezone(instance.cfg.timezone)
+    lat, lon = instance.cfg.getLatLon()
     sun = Sun(lat, lon)
     now_naive = now.replace(tzinfo=None)
-    sunrise = sun.get_sunrise_time(at_date=now_naive, time_zone=tz)
-    sunrise = sunrise.replace(year=now.year, month=now.month, day=now.day)
-    sunset = sun.get_sunset_time(at_date=now_naive, time_zone=tz)
-    sunset = sunset.replace(year=now.year, month=now.month, day=now.day)
-    
-    # Get waterflow data
-    waterflow_data = {
-        "enabled": False,
-        "type": None,
-        "flow_rate_lpm": 0,
-        "is_active": False,
-        "leak_detection_enabled": False,
-        "last_update": None,
-        "history": []
-    }
-    
-    if irrigate_instance.waterflow:
-        waterflow_data["enabled"] = irrigate_instance.waterflow.enabled
-        waterflow_data["type"] = irrigate_instance.waterflow.type
-        waterflow_data["leak_detection_enabled"] = irrigate_instance.waterflow.leakdetection
-        
-        if irrigate_instance.waterflow.started:
-            flow_rate = irrigate_instance.waterflow.lastLiter_1m()
-            waterflow_data["flow_rate_lpm"] = round(flow_rate, 2)
-            waterflow_data["is_active"] = flow_rate > 0
-            
-            # Get history (last 60 minutes)
-            if hasattr(irrigate_instance.waterflow, 'getHistory'):
-                waterflow_data["history"] = irrigate_instance.waterflow.getHistory()
-            
-            # Get last update time if available
-            if hasattr(irrigate_instance.waterflow, '_lastupdate'):
-                waterflow_data["last_update"] = irrigate_instance.waterflow._lastupdate.isoformat()
-    
+    sunrise = sun.get_sunrise_time(at_date=now_naive, time_zone=tz).replace(
+        year=now.year, month=now.month, day=now.day,
+    )
+    sunset = sun.get_sunset_time(at_date=now_naive, time_zone=tz).replace(
+        year=now.year, month=now.month, day=now.day,
+    )
+    with instance._state_lock:
+        status, temporary = instance._status, list(instance._tempStatus)
     return {
         "system": {
-            "status": irrigate_instance._status,
-            "temp_status": list(irrigate_instance._tempStatus.keys()),
-            "uptime_minutes": int((datetime.now() - irrigate_instance.startTime).total_seconds() / 60),
-            "started_at": irrigate_instance.startTime.isoformat(),
+            "status": status,
+            "temp_status": temporary,
+            "uptime_minutes": int(max(0, instance.clock.monotonic() - instance._start_mono) / 60),
+            "started_at": instance.startTime.replace(tzinfo=None).isoformat(),
             "current_time": now.isoformat(),
-            "season": season,
+            "season": instance.getSeason(lat, now),
             "sunrise": sunrise.isoformat(),
             "sunset": sunset.isoformat(),
-            "timezone": irrigate_instance.cfg.timezone
+            "timezone": instance.cfg.timezone,
         },
         "valves": valves,
         "sensors": sensors,
-        "waterflow": waterflow_data
+        "waterflow": _waterflow_projection(instance.waterflow),
     }
+
+
+@app.get("/api/health")
+async def get_health():
+    return _instance().get_health()
 
 
 @app.get("/api/valves")
 async def get_valves():
-    """Get all valves summary"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    valves = []
-    for name, v in irrigate_instance.valves.items():
-        valves.append({
-            "name": name,
-            "enabled": v.enabled,
-            "is_open": v.is_open,
-            "seconds_remain": v.secondsRemain,
-        })
-    
-    return {"valves": valves}
+    instance = _instance()
+    return {"valves": [
+        {key: valve[key] for key in ("name", "enabled", "is_open", "seconds_remain")}
+        for valve in instance.controller.snapshot()
+    ]}
 
 
 @app.get("/api/valves/{valve_name}")
 async def get_valve_details(valve_name: str):
-    """Get detailed valve information"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    v = irrigate_instance.valves[valve_name]
-    
-    # Build schedules array
-    schedules = []
-    for i, s in enumerate(v.schedules):
-        schedules.append({
-            "index": i,
-            "seasons": s.seasons if hasattr(s, 'seasons') else [],
-            "days": s.days if hasattr(s, 'days') else [],
-            "time_based_on": s.time_based_on,
-            "fixed_start_time": s.fixed_start_time if hasattr(s, 'fixed_start_time') else None,
-            "offset_minutes": s.offset_minutes if hasattr(s, 'offset_minutes') else 0,
-            "duration": s.duration,
-            "enable_uv_adjustments": s.enable_uv_adjustments
-        })
-    
-    return {
-        "name": v.name,
-        "type": v.config.type,
-        "enabled": v.enabled,
-        "is_open": v.is_open,
-        "handled": v.handled,
-        "sensor_name": v.sensor.config.name if hasattr(v, 'sensor') else None,
-        "seconds_daily": v.secondsDaily,
-        "liters_daily": v.litersDaily,
-        "seconds_remain": v.secondsRemain,
-        "seconds_last": v.secondsLast if hasattr(v, 'secondsLast') else 0,
-        "liters_last": v.litersLast if hasattr(v, 'litersLast') else 0,
-        "schedules": schedules,
-        "has_waterflow": v.waterflow is not None,
-        "baseline_lpm": v.baseline_lpm,
-        "baseline_trend": v.baseline_trend,
-        "baseline_std_dev": v.baseline_std_dev,
-        "baseline_sample_count": v.baseline_sample_count
-    }
+    instance = _instance()
+    valve = _valve(instance, valve_name)
+    with instance.controller.lock:
+        values = instance.controller.valve_snapshot(valve_name)
+        sensor = getattr(valve, "sensor", None)
+        return {
+            **{key: values[key] for key in (
+                "name", "enabled", "is_open", "handled", "seconds_daily", "liters_daily",
+                "seconds_remain", "seconds_last", "liters_last",
+            )},
+            "type": valve.config.type,
+            "sensor_name": sensor.config.name if sensor is not None else None,
+            "schedules": [
+                {
+                    "index": index, "seasons": list(schedule.seasons), "days": list(schedule.days),
+                    "time_based_on": schedule.time_based_on,
+                    "fixed_start_time": getattr(schedule, "fixed_start_time", None),
+                    "offset_minutes": getattr(schedule, "offset_minutes", 0),
+                    "duration": schedule.duration,
+                    "enable_uv_adjustments": schedule.enable_uv_adjustments,
+                }
+                for index, schedule in enumerate(valve.schedules)
+            ],
+            "has_waterflow": valve.waterflow is not None,
+            "baseline_lpm": valve.baseline_lpm,
+            "baseline_trend": valve.baseline_trend,
+            "baseline_std_dev": valve.baseline_std_dev,
+            "baseline_sample_count": valve.baseline_sample_count,
+        }
 
 
 @app.get("/api/next-runs")
 async def get_next_runs():
-    """Get next scheduled run for each valve (cached for efficiency)"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    next_runs = get_next_scheduled_runs()
-    
+    instance = _instance()
+    next_runs = await run_in_threadpool(get_next_scheduled_runs)
+    with _cache_lock:
+        age = (
+            int(max(0, instance.clock.monotonic() - next_runs_cache["timestamp"]))
+            if _cache_instance is instance and next_runs_cache["data"] else 0
+        )
     return {
-        "next_runs": next_runs,
-        "cache_age_seconds": int(time.time() - next_runs_cache["timestamp"]) if next_runs_cache["data"] else 0,
-        "cache_ttl_seconds": next_runs_cache["ttl"]
+        "next_runs": next_runs, "cache_age_seconds": age,
+        "cache_ttl_seconds": next_runs_cache["ttl"],
     }
 
 
 @app.get("/api/sensors")
 async def get_sensors():
-    """Get all sensor data"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    sensors = []
-    for name, s in irrigate_instance.sensors.items():
-        sensor_data = {
-            "name": name,
-            "type": s.type if hasattr(s, 'type') else "unknown",
-            "enabled": s.enabled if hasattr(s, 'enabled') else False,
-        }
-        
-        try:
-            sensor_data["should_disable"] = s.shouldDisable() if hasattr(s, 'shouldDisable') else False
-            sensor_data["factor"] = s.getFactor() if hasattr(s, 'getFactor') else 1.0
-            sensor_data["telemetry"] = s.getTelemetry() if hasattr(s, 'getTelemetry') else {}
-        except Exception:
-            sensor_data["error"] = True
-        
-        sensors.append(sensor_data)
-    
-    return {"sensors": sensors}
+    instance = _instance()
+    return {"sensors": [_sensor_projection(name, sensor) for name, sensor in instance.sensors.items()]}
 
 
 @app.get("/api/queue")
 async def get_queue():
-    """Get current job queue"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    # Get all items from queue without removing them
-    queue_items = []
-    temp_items = []
-    
-    # Extract items from queue
-    while not irrigate_instance.q.empty():
-        try:
-            job = irrigate_instance.q.get_nowait()
-            temp_items.append(job)
-            queue_items.append({
-                "valve_name": job.valve.name,
-                "duration_minutes": job.duration,
-                "is_scheduled": job.sched is not None,
-                "schedule_index": getattr(job.sched, 'index', None) if job.sched else None
-            })
-        except:
-            break
-    
-    # Put items back in queue
-    for job in temp_items:
-        irrigate_instance.q.put(job)
-    
-    return {
-        "queue_size": len(queue_items),
-        "jobs": queue_items
-    }
+    jobs = _instance().controller.queue_snapshot()
+    items = [{
+        "valve_name": job.valve.name,
+        "duration_minutes": job.duration,
+        "is_scheduled": job.sched is not None,
+        "schedule_index": getattr(job.sched, "index", None) if job.sched is not None else None,
+    } for job in jobs]
+    return {"queue_size": len(items), "jobs": items}
 
 
 @app.get("/api/config")
 async def get_config():
-    """Get system configuration (read-only)"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    cfg = irrigate_instance.cfg
-    
-    # Get alerts configuration
-    alerts_config = {}
-    if hasattr(cfg.cfg, 'alerts'):
-        alerts_cfg = cfg.cfg.alerts
-        alerts_config = {
-            "enabled": {
-                "leak": alerts_cfg.enabled.leak if hasattr(alerts_cfg, 'enabled') else True,
-                "malfunction_no_flow": alerts_cfg.enabled.malfunction_no_flow if hasattr(alerts_cfg, 'enabled') else True,
-                "irregular_flow": alerts_cfg.enabled.irregular_flow if hasattr(alerts_cfg, 'enabled') else True,
-                "sensor_error": alerts_cfg.enabled.sensor_error if hasattr(alerts_cfg, 'enabled') else True,
-                "system_exit": alerts_cfg.enabled.system_exit if hasattr(alerts_cfg, 'enabled') else True,
-            },
-            "leak_repeat_minutes": alerts_cfg.leak_repeat_minutes if hasattr(alerts_cfg, 'leak_repeat_minutes') else 15,
-            "irregular_flow_threshold": alerts_cfg.irregular_flow_threshold if hasattr(alerts_cfg, 'irregular_flow_threshold') else 2.0,
-        }
-    
-    # Get waterflow configuration
-    waterflow_config = {}
-    if irrigate_instance.waterflow:
-        waterflow_config = {
-            "enabled": irrigate_instance.waterflow.enabled,
-            "type": irrigate_instance.waterflow.type,
-            "leak_detection": irrigate_instance.waterflow.leakdetection
-        }
-    
-    # Get sensors configuration
-    sensors_config = []
-    for name, sensor in irrigate_instance.sensors.items():
-        sensor_cfg = {
-            "name": name,
-            "type": sensor.type if hasattr(sensor, 'type') else 'unknown',
-            "enabled": sensor.enabled if hasattr(sensor, 'enabled') else False
-        }
-        
-        # Add OpenWeatherMap specific config
-        if sensor.type == 'OpenWeatherMap' and hasattr(sensor, 'precip_days'):
-            sensor_cfg["precipitation"] = {
-                "days_to_aggregate": sensor.precip_days,
-                "disable_threshold_mm": sensor.precip_threshold
+    instance = _instance()
+    with instance.controller.lock:
+        cfg = instance.cfg
+        data = cfg.get_data()
+        alerts = data["alerts"]
+        flow = instance.waterflow
+        sensors = []
+        for name, sensor in instance.sensors.items():
+            item = {
+                "name": name, "type": getattr(sensor, "type", "unknown"),
+                "enabled": getattr(sensor, "enabled", False),
             }
-        
-        sensors_config.append(sensor_cfg)
-    
-    return {
-        "timezone": cfg.timezone,
-        "location": {
-            "latitude": cfg.latitude,
-            "longitude": cfg.longitude
-        },
-        "max_concurrent_valves": cfg.valvesConcurrency,
-        "telemetry_enabled": cfg.telemetry,
-        "mqtt_enabled": cfg.mqttEnabled,
-        "valve_count": len(irrigate_instance.valves),
-        "sensor_count": len(irrigate_instance.sensors),
-        "alerts": alerts_config,
-        "waterflow": waterflow_config,
-        "sensors": sensors_config
-    }
+            if item["type"] == "OpenWeatherMap" and hasattr(sensor, "precip_days"):
+                item["precipitation"] = {
+                    "days_to_aggregate": sensor.precip_days,
+                    "disable_threshold_mm": sensor.precip_threshold,
+                }
+            sensors.append(item)
+        return {
+            "timezone": cfg.timezone,
+            "location": {"latitude": cfg.latitude, "longitude": cfg.longitude},
+            "max_concurrent_valves": cfg.valvesConcurrency,
+            "telemetry_enabled": cfg.telemetry,
+            "mqtt_enabled": cfg.mqttEnabled,
+            "valve_count": len(instance.valves),
+            "sensor_count": len(instance.sensors),
+            "alerts": {
+                "enabled": {flag: alerts["enabled"][flag] for flag in _LEGACY_ALERT_FLAGS},
+                "leak_repeat_minutes": alerts["leak_repeat_minutes"],
+                "irregular_flow_threshold": alerts["irregular_flow_threshold"],
+            },
+            "waterflow": {
+                "enabled": flow.enabled, "type": flow.type, "leak_detection": flow.leakdetection,
+            } if flow is not None else {},
+            "sensors": sensors,
+        }
 
 
 @app.post("/api/config/alerts/enabled")
 async def update_alert_enabled(request: dict):
-    """Update alert enabled/disabled state"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    alert_type = request.get("alert_type")
-    enabled = request.get("enabled")
-    
+    instance = _instance()
+    alert_type, enabled = request.get("alert_type"), request.get("enabled")
     if not alert_type or enabled is None:
         raise HTTPException(status_code=400, detail="Missing alert_type or enabled")
-    
-    # Update the alert manager
-    from alerts import AlertType
-    alert_type_enum = AlertType(alert_type)
-    irrigate_instance.alerts.enabled[alert_type_enum] = enabled
-    
-    # Update config file
-    irrigate_instance.cfg.cfg.alerts.enabled.__dict__[alert_type] = enabled
-    irrigate_instance.cfg.save_runtime_config()
-    
-    irrigate_instance.logger.info(f"Alert '{alert_type}' {'enabled' if enabled else 'disabled'}")
-    
+    if not isinstance(alert_type, str) or alert_type not in {item.value for item in AlertType}:
+        raise HTTPException(status_code=400, detail="Unknown alert_type")
+    enabled = _boolean(enabled, "enabled")
+    await _update_config(instance, lambda data: data["alerts"]["enabled"].update({alert_type: enabled}))
     return {"success": True, "alert_type": alert_type, "enabled": enabled}
 
 
 @app.post("/api/config/alerts/settings")
 async def update_alert_setting(request: dict):
-    """Update alert settings (leak_repeat_minutes, irregular_flow_threshold)"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    setting = request.get("setting")
-    value = request.get("value")
-    
+    instance = _instance()
+    setting, value = request.get("setting"), request.get("value")
     if not setting or value is None:
         raise HTTPException(status_code=400, detail="Missing setting or value")
-    
-    # Update the alert manager
-    if setting == "leak_repeat_minutes":
-        irrigate_instance.alerts.leak_repeat_minutes = int(value)
-        irrigate_instance.cfg.cfg.alerts.leak_repeat_minutes = int(value)
-    elif setting == "irregular_flow_threshold":
-        irrigate_instance.alerts.irregular_flow_threshold = float(value)
-        irrigate_instance.cfg.cfg.alerts.irregular_flow_threshold = float(value)
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown setting: {setting}")
-    
-    # Save config file
-    irrigate_instance.cfg.save_runtime_config()
-    
-    irrigate_instance.logger.info(f"Alert setting '{setting}' updated to {value}")
-    
+    if setting not in ("leak_repeat_minutes", "irregular_flow_threshold"):
+        raise HTTPException(status_code=400, detail="Unknown setting")
+    number = _number(value, int if setting == "leak_repeat_minutes" else float)
+    await _update_config(instance, lambda data: data["alerts"].update({setting: number}))
     return {"success": True, "setting": setting, "value": value}
 
 
 @app.post("/api/config/waterflow")
 async def update_waterflow_config(request: dict):
-    """Update waterflow configuration (enabled, leak_detection)"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if not irrigate_instance.waterflow:
+    instance = _instance()
+    if instance.waterflow is None:
         raise HTTPException(status_code=400, detail="Waterflow not configured in system")
-    
-    setting = request.get("setting")
-    value = request.get("value")
-    
+    setting, value = request.get("setting"), request.get("value")
     if not setting or value is None:
         raise HTTPException(status_code=400, detail="Missing setting or value")
-    
-    # Update waterflow settings
-    if setting == "enabled":
-        irrigate_instance.waterflow.enabled = bool(value)
-        irrigate_instance.cfg.cfg.waterflow.enabled = bool(value)
-        irrigate_instance.logger.info(f"Waterflow {'enabled' if value else 'disabled'} (requires restart to take effect)")
-    elif setting == "leak_detection":
-        irrigate_instance.waterflow.leakdetection = bool(value)
-        irrigate_instance.cfg.cfg.waterflow.leakdetection = bool(value)
-        irrigate_instance.logger.info(f"Waterflow leak detection {'enabled' if value else 'disabled'}")
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown setting: {setting}")
-    
-    # Save config file
-    irrigate_instance.cfg.save_runtime_config()
-    
+    if setting not in ("enabled", "leak_detection"):
+        raise HTTPException(status_code=400, detail="Unknown setting")
+    enabled = _boolean(value, "value")
+    key = "leakdetection" if setting == "leak_detection" else setting
+    await _update_config(instance, lambda data: data["waterflow"].update({key: enabled}))
     return {"success": True, "setting": setting, "value": value}
 
 
 @app.post("/api/config/sensors/{sensor_name}")
 async def update_sensor_config(sensor_name: str, request: dict):
-    """Update sensor configuration settings"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if sensor_name not in irrigate_instance.sensors:
+    instance = _instance()
+    if sensor_name not in instance.sensors:
         raise HTTPException(status_code=404, detail=f"Sensor '{sensor_name}' not found")
-    
-    sensor = irrigate_instance.sensors[sensor_name]
-    setting = request.get("setting")
-    value = request.get("value")
-    
+    sensor = instance.sensors[sensor_name]
+    setting, value = request.get("setting"), request.get("value")
     if not setting or value is None:
         raise HTTPException(status_code=400, detail="Missing setting or value")
-    
-    # Find sensor config in cfg
-    sensor_cfg = None
-    for s in irrigate_instance.cfg.cfg.sensors:
-        if s.name == sensor_name:
-            sensor_cfg = s
-            break
-    
-    if not sensor_cfg:
+    if getattr(sensor, "type", None) != "OpenWeatherMap":
+        raise HTTPException(status_code=400, detail="Sensor type settings not supported")
+    if setting not in ("precip_days", "precip_threshold"):
+        raise HTTPException(status_code=400, detail="Unknown setting")
+    number = _number(value, int if setting == "precip_days" else float)
+    key = "days_to_aggregate" if setting == "precip_days" else "disable_threshold_mm"
+
+    def mutate(data):
+        for item in data["sensors"]:
+            if item["name"] == sensor_name:
+                item["precipitation"][key] = number
+                return
         raise HTTPException(status_code=404, detail=f"Sensor config for '{sensor_name}' not found")
-    
-    # Update sensor-specific settings
-    if sensor.type == 'OpenWeatherMap':
-        if setting == "precip_days":
-            sensor.precip_days = int(value)
-            if not hasattr(sensor_cfg, 'precipitation'):
-                from types import SimpleNamespace
-                sensor_cfg.precipitation = SimpleNamespace()
-            sensor_cfg.precipitation.days_to_aggregate = int(value)
-            irrigate_instance.logger.info(f"Sensor '{sensor_name}' precipitation days updated to {value}")
-        elif setting == "precip_threshold":
-            sensor.precip_threshold = float(value)
-            if not hasattr(sensor_cfg, 'precipitation'):
-                from types import SimpleNamespace
-                sensor_cfg.precipitation = SimpleNamespace()
-            sensor_cfg.precipitation.disable_threshold_mm = float(value)
-            irrigate_instance.logger.info(f"Sensor '{sensor_name}' precipitation threshold updated to {value}mm")
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown setting: {setting}")
-    else:
-        raise HTTPException(status_code=400, detail=f"Sensor type '{sensor.type}' settings not supported")
-    
-    # Save config file
-    irrigate_instance.cfg.save_runtime_config()
-    
+
+    await _update_config(instance, mutate)
     return {"success": True, "sensor": sensor_name, "setting": setting, "value": value}
 
 
 @app.post("/api/valves/{valve_name}/start-manual")
-async def start_valve_manual(valve_name: str, duration_minutes: float = 5):
-    """Immediately open valve (bypass queue, no concurrency check)"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    valve.is_open = True  # Track state
-    valve.open()
-    irrigate_instance.logger.info(f"Manual start: Valve '{valve_name}' opened manually")
-    
-    return {
-        "success": True,
-        "valve": valve_name,
-        "action": "opened_manual"
-    }
+async def start_valve_manual(valve_name: str, duration_minutes: float = 30):
+    """Start a bounded manual operation; duration_minutes is an optional query parameter."""
+    instance = _instance()
+    _valve(instance, valve_name)
+    await _run_control(instance, instance.controller.start_manual, valve_name, duration_minutes)
+    return {"success": True, "valve": valve_name, "action": "opened_manual"}
 
 
 @app.post("/api/valves/{valve_name}/queue")
 async def queue_valve(valve_name: str, duration_minutes: float):
-    """Queue a job for this valve (respects concurrency)"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
+    instance = _instance()
+    valve = _valve(instance, valve_name)
     job = model.Job(valve=valve, duration=duration_minutes, sched=None)
-    irrigate_instance.queueJob(job)
-    
+    await _run_control(instance, instance.queueJob, job)
     return {
-        "success": True,
-        "valve": valve_name,
-        "duration_minutes": duration_minutes,
-        "action": "queued",
-        "queued_at": datetime.now().isoformat()
+        "success": True, "valve": valve_name, "duration_minutes": duration_minutes,
+        "action": "queued", "queued_at": _local_now(instance).replace(tzinfo=None).isoformat(),
     }
 
 
 @app.post("/api/valves/{valve_name}/stop")
 async def stop_valve(valve_name: str):
-    """Immediately close valve"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    valve.is_open = False  # Track state (job will detect and terminate)
-    valve.close()
-    irrigate_instance.logger.info(f"Manual stop: Valve '{valve_name}' closed")
-    
-    return {
-        "success": True,
-        "valve": valve_name,
-        "action": "closed"
-    }
+    instance = _instance()
+    _valve(instance, valve_name)
+    await _run_control(instance, instance.controller.stop, valve_name)
+    return {"success": True, "valve": valve_name, "action": "closed"}
+
+
+async def _set_valve_enabled(instance, name, enabled):
+    _valve(instance, name)
+    await _update_config(
+        instance, lambda data: _candidate_valve(data, name).update(enabled=enabled),
+        enabled_updates={name: enabled},
+    )
+    if not enabled and instance.controller.faults.get(name):
+        _control_error(instance, ControlError(
+            "Valve disabled, but close could not be confirmed; see system health and retry Close", 503,
+        ))
 
 
 @app.post("/api/valves/{valve_name}/enable")
 async def enable_valve(valve_name: str):
-    """Enable valve"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    valve.enabled = True
-    
-    # Persist changes to config file
-    irrigate_instance.cfg.save_runtime_config()
-    
-    irrigate_instance.logger.info(f"Valve '{valve_name}' enabled")
-    
-    invalidate_next_runs_cache()
-    
+    await _set_valve_enabled(_instance(), valve_name, True)
     return {"success": True, "valve": valve_name, "action": "enabled"}
 
 
 @app.post("/api/valves/{valve_name}/disable")
 async def disable_valve(valve_name: str):
-    """Disable valve"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    valve.enabled = False
-    
-    # Persist changes to config file
-    irrigate_instance.cfg.save_runtime_config()
-    
-    irrigate_instance.logger.info(f"Valve '{valve_name}' disabled")
-    
-    invalidate_next_runs_cache()
-    
+    await _set_valve_enabled(_instance(), valve_name, False)
     return {"success": True, "valve": valve_name, "action": "disabled"}
+
+
+def _schedule_at(valve, index):
+    if index < 0 or index >= len(valve["schedules"]):
+        raise HTTPException(
+            status_code=404, detail=f"Schedule index {index} not found for valve '{valve['name']}'",
+        )
+    return valve["schedules"][index]
 
 
 @app.put("/api/valves/{valve_name}/schedules/{schedule_index}")
 async def update_valve_schedule(valve_name: str, schedule_index: int, schedule_data: dict):
-    """Update a specific schedule for a valve
-    
-    Request body should contain schedule fields:
-    {
-        "seasons": ["Spring", "Summer"],  // optional
-        "days": ["Mon", "Tue", "Wed"],    // optional
-        "time_based_on": "fixed|sunrise|sunset",
-        "fixed_start_time": "06:00",      // required if time_based_on is "fixed"
-        "offset_minutes": -30,            // optional, for sunrise/sunset
-        "duration": 20,                   // minutes
-        "enable_uv_adjustments": true     // optional
+    """Update only supplied schedule fields in a validated configuration candidate."""
+    instance = _instance()
+    _valve(instance, valve_name)
+
+    def mutate(data):
+        _schedule_at(_candidate_valve(data, valve_name), schedule_index).update(schedule_data)
+
+    await _update_config(instance, mutate)
+    return {
+        "success": True, "valve": valve_name, "schedule_index": schedule_index,
+        "action": "schedule_updated",
     }
-    """
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    
-    if schedule_index < 0 or schedule_index >= len(valve.schedules):
-        raise HTTPException(status_code=404, detail=f"Schedule index {schedule_index} not found for valve '{valve_name}'")
-    
-    try:
-        # Update the schedule object in memory
-        sched = valve.schedules[schedule_index]
-        
-        # Update fields that are provided
-        if "seasons" in schedule_data:
-            sched.seasons = schedule_data["seasons"]
-        if "days" in schedule_data:
-            sched.days = schedule_data["days"]
-        if "time_based_on" in schedule_data:
-            sched.time_based_on = schedule_data["time_based_on"]
-        if "fixed_start_time" in schedule_data:
-            sched.fixed_start_time = schedule_data["fixed_start_time"]
-        if "offset_minutes" in schedule_data:
-            sched.offset_minutes = schedule_data["offset_minutes"]
-        if "duration" in schedule_data:
-            sched.duration = schedule_data["duration"]
-        if "enable_uv_adjustments" in schedule_data:
-            sched.enable_uv_adjustments = schedule_data["enable_uv_adjustments"]
-        
-        # Validate the schedule
-        if sched.time_based_on == "fixed" and not hasattr(sched, 'fixed_start_time'):
-            raise HTTPException(status_code=400, detail="fixed_start_time is required when time_based_on is 'fixed'")
-        
-        # Persist changes to config file
-        irrigate_instance.cfg.save_runtime_config()
-        
-        irrigate_instance.logger.info(f"Updated schedule {schedule_index} for valve '{valve_name}'")
-        
-        invalidate_next_runs_cache()
-        
-        return {
-            "success": True,
-            "valve": valve_name,
-            "schedule_index": schedule_index,
-            "action": "schedule_updated"
-        }
-        
-    except Exception as ex:
-        irrigate_instance.logger.error(f"Error updating schedule: {ex}")
-        raise HTTPException(status_code=400, detail=str(ex))
 
 
 @app.post("/api/valves/{valve_name}/schedules")
 async def create_valve_schedule(valve_name: str, schedule_data: dict):
-    """Create a new schedule for a valve
-    
-    Request body should contain schedule fields:
-    {
-        "seasons": ["Spring", "Summer"],  // optional
-        "days": ["Mon", "Tue", "Wed"],    // optional
-        "time_based_on": "fixed|sunrise|sunset",
-        "fixed_start_time": "06:00",      // required if time_based_on is "fixed"
-        "offset_minutes": -30,            // optional, for sunrise/sunset
-        "duration": 20,                   // minutes
-        "enable_uv_adjustments": true     // optional
-    }
-    """
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    
-    try:
-        from types import SimpleNamespace
-        
-        # Create a new schedule object
-        new_schedule = SimpleNamespace()
-        
-        # Set required and optional fields
-        new_schedule.seasons = schedule_data.get("seasons", [])
-        new_schedule.days = schedule_data.get("days", [])
-        new_schedule.time_based_on = schedule_data.get("time_based_on", "fixed")
-        new_schedule.duration = schedule_data.get("duration", 10)
-        new_schedule.enable_uv_adjustments = schedule_data.get("enable_uv_adjustments", False)
-        
-        # Handle time-based fields
-        if new_schedule.time_based_on == "fixed":
-            if "fixed_start_time" not in schedule_data:
-                raise HTTPException(status_code=400, detail="fixed_start_time is required when time_based_on is 'fixed'")
-            new_schedule.fixed_start_time = schedule_data["fixed_start_time"]
-        else:
-            new_schedule.offset_minutes = schedule_data.get("offset_minutes", 0)
-        
-        # Add the new schedule to the valve
-        valve.schedules.append(new_schedule)
-        
-        # Persist changes to config file
-        irrigate_instance.cfg.save_runtime_config()
-        
-        schedule_index = len(valve.schedules) - 1
-        irrigate_instance.logger.info(f"Created new schedule {schedule_index} for valve '{valve_name}'")
-        
-        invalidate_next_runs_cache()
-        
-        return {
-            "success": True,
-            "valve": valve_name,
-            "schedule_index": schedule_index,
-            "action": "schedule_created"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as ex:
-        irrigate_instance.logger.error(f"Error creating schedule: {ex}")
-        raise HTTPException(status_code=400, detail=str(ex))
+    instance = _instance()
+    _valve(instance, valve_name)
+    schedule = copy.deepcopy(schedule_data)
+    for key, value in (
+        ("seasons", []), ("days", []), ("time_based_on", "fixed"),
+        ("duration", 10), ("enable_uv_adjustments", False),
+    ):
+        schedule.setdefault(key, value)
+    if schedule["time_based_on"] == "fixed":
+        if "fixed_start_time" not in schedule:
+            raise HTTPException(status_code=400, detail="fixed_start_time is required when time_based_on is 'fixed'")
+    else:
+        schedule.setdefault("offset_minutes", 0)
+    accepted = await _update_config(
+        instance, lambda data: _candidate_valve(data, valve_name)["schedules"].append(schedule),
+    )
+    index = len(_candidate_valve(accepted, valve_name)["schedules"]) - 1
+    return {"success": True, "valve": valve_name, "schedule_index": index, "action": "schedule_created"}
 
 
 @app.delete("/api/valves/{valve_name}/schedules/{schedule_index}")
 async def delete_valve_schedule(valve_name: str, schedule_index: int):
-    """Delete a specific schedule from a valve"""
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    
-    if schedule_index < 0 or schedule_index >= len(valve.schedules):
-        raise HTTPException(status_code=404, detail=f"Schedule index {schedule_index} not found for valve '{valve_name}'")
-    
-    if len(valve.schedules) == 1:
-        raise HTTPException(status_code=400, detail=f"Cannot delete the last schedule for valve '{valve_name}'. A valve must have at least one schedule.")
-    
-    try:
-        # Remove the schedule
-        deleted_schedule = valve.schedules.pop(schedule_index)
-        
-        # Persist changes to config file
-        irrigate_instance.cfg.save_runtime_config()
-        
-        irrigate_instance.logger.info(f"Deleted schedule {schedule_index} from valve '{valve_name}'")
-        
-        invalidate_next_runs_cache()
-        
-        return {
-            "success": True,
-            "valve": valve_name,
-            "schedule_index": schedule_index,
-            "action": "schedule_deleted",
-            "remaining_schedules": len(valve.schedules)
-        }
-        
-    except Exception as ex:
-        irrigate_instance.logger.error(f"Error deleting schedule: {ex}")
-        raise HTTPException(status_code=400, detail=str(ex))
+    instance = _instance()
+    _valve(instance, valve_name)
+
+    def mutate(data):
+        valve = _candidate_valve(data, valve_name)
+        _schedule_at(valve, schedule_index)
+        if len(valve["schedules"]) == 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete the last schedule for valve '{valve_name}'. A valve must have at least one schedule.",
+            )
+        valve["schedules"].pop(schedule_index)
+
+    accepted = await _update_config(instance, mutate)
+    return {
+        "success": True, "valve": valve_name, "schedule_index": schedule_index,
+        "action": "schedule_deleted",
+        "remaining_schedules": len(_candidate_valve(accepted, valve_name)["schedules"]),
+    }
 
 
 @app.put("/api/valves/{valve_name}/enabled")
 async def update_valve_enabled(valve_name: str, enabled: bool):
-    """Update valve enabled status and persist to config
-    
-    Request body: {"enabled": true/false}
-    """
-    if irrigate_instance is None:
-        raise HTTPException(status_code=503, detail="System not initialized")
-    
-    if valve_name not in irrigate_instance.valves:
-        raise HTTPException(status_code=404, detail=f"Valve '{valve_name}' not found")
-    
-    valve = irrigate_instance.valves[valve_name]
-    valve.enabled = enabled
-    
-    # Persist changes to config file
-    irrigate_instance.cfg.save_runtime_config()
-    
-    irrigate_instance.logger.info(f"Valve '{valve_name}' enabled status set to {enabled}")
-    
-    invalidate_next_runs_cache()
-    
-    return {
-        "success": True,
-        "valve": valve_name,
-        "enabled": enabled,
-        "action": "enabled_updated"
-    }
+    """Persist enabled status; enabled is a required boolean QUERY parameter."""
+    await _set_valve_enabled(_instance(), valve_name, enabled)
+    return {"success": True, "valve": valve_name, "enabled": enabled, "action": "enabled_updated"}
 
 
 @app.post("/api/simulate", response_class=PlainTextResponse)
 async def simulate_schedule(
-    date: str = None,
-    time: str = None, 
-    uv: float = None,
-    season: str = None,
-    rain: bool = None,
-    days: int = None
+    date: str = None, time: str = None, uv: float = None,
+    season: str = None, rain: bool = None, days: int = None,
 ):
-    """
-    Run irrigation schedule simulation and return formatted text output
-    
-    Query parameters:
-    - date: Date in YYYY-MM-DD or MM-DD format
-    - time: Time in HH:MM or HH:MM:SS format
-    - uv: UV index override (0-15)
-    - season: Season override (Spring, Summer, Fall, Winter)
-    - rain: Weather sensor should disable irrigation (true/false)
-    - days: Number of days to simulate (default: 1)
-    """
-    if irrigate_instance is None:
-        return "ERROR: Irrigate system not initialized", 503
-    
-    try:
-        # Create simulator instance
-        simulator = ScheduleSimulator(irrigate_instance)
-        
-        # Build options string from parameters
-        options = []
-        if date:
-            options.append(f"date:{date}")
-        if time:
-            options.append(f"time:{time}")
-        if uv is not None:
-            options.append(f"uv:{uv}")
-        if season:
-            options.append(f"season:{season}")
-        if rain is not None:
-            options.append(f"rain:{'yes' if rain else 'no'}")
-        if days and days > 1:
-            options.append(f"days:{days}")
-        
-        # Parse options and run simulation
-        simulator.parse_schedule_options(','.join(options))
-        
-        # Return the formatted schedule text (same as --simulate output)
+    """Return the legacy formatted schedule using a read-only simulator."""
+    instance = _instance()
+    options = []
+    for key, value in (("date", date), ("time", time), ("uv", uv), ("season", season), ("days", days)):
+        if value is not None:
+            options.append(f"{key}:{value}")
+    if rain is not None:
+        options.append(f"rain:{'yes' if rain else 'no'}")
+
+    def simulate():
+        simulator = ScheduleSimulator(instance)
+        simulator.parse_schedule_options(",".join(options))
         return simulator.format_schedule()
-        
-    except Exception as ex:
-        irrigate_instance.logger.error(f"Error in simulate endpoint: {format(ex)}")
-        return f"ERROR: {str(ex)}", 500
+
+    try:
+        return await run_in_threadpool(simulate)
+    except (ValueError, OverflowError) as error:
+        instance.logger.warning("API simulation input rejected (%s)", type(error).__name__)
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        instance.logger.error("API simulation failed (%s)", type(error).__name__)
+        raise HTTPException(status_code=503, detail="Unable to simulate schedule") from error
 
 
-# Serve static files
-app.mount("/static", StaticFiles(directory="web/static"), name="static")
+app.mount("/static", StaticFiles(directory=str(_WEB_DIRECTORY / "static")), name="static")
+
 
 @app.get("/")
 async def serve_frontend():
-    """Serve the main web UI"""
-    return FileResponse('web/index.html')
+    return FileResponse(str(_WEB_DIRECTORY / "index.html"))
 
 
 def run_api_server(irrigate, host="0.0.0.0", port=8000):
     global irrigate_instance
     irrigate_instance = irrigate
-    
-    irrigate.logger.info(f"Starting FastAPI server on {host}:{port}")
-    irrigate.logger.info(f"API documentation available at http://{host}:{port}/docs")
-    irrigate.logger.info(f"Web UI available at http://{host}:{port}/")
-    
-    # Configure uvicorn to run without reloader (important for threading)
+    invalidate_next_runs_cache()
+    irrigate.logger.info("Starting FastAPI server on %s:%s", host, port)
     config = uvicorn.Config(
-        app=app,
-        host=host,
-        port=port,
-        log_level="info",
-        access_log=False,
-        use_colors=True
+        app=app, host=host, port=port, log_level="info", access_log=False, use_colors=True,
     )
     server = uvicorn.Server(config)
+    irrigate.api_server = server
     server.run()

@@ -1,6 +1,9 @@
 import pytz
 import calendar
+import math
 from datetime import datetime, timedelta
+from scheduling import adjusted_duration, uv_factor
+from sensors.base_sensor import SensorUnavailable
 
 class ScheduleSimulator:
   """
@@ -39,8 +42,7 @@ class ScheduleSimulator:
         continue
       
       if ':' not in part:
-        self.logger.warning(f"Invalid schedule option format: '{part}'. Expected key:value")
-        continue
+        raise ValueError("Simulation options must use key:value")
       
       key, value = part.split(':', 1)
       key = key.strip().lower()
@@ -52,12 +54,15 @@ class ScheduleSimulator:
           if value.count('-') == 2:
             self.override_date = datetime.strptime(value, '%Y-%m-%d').date()
           else:
-            year = datetime.now().year
+            year = self.irrigate.clock.now().year
             self.override_date = datetime.strptime(f"{year}-{value}", '%Y-%m-%d').date()
           self.logger.info(f"Override date: {self.override_date}")
         
         elif key == 'days':
           self.simulate_days = int(value)
+          if self.simulate_days <= 0:
+            raise ValueError("Simulation days must be positive")
+          self.irrigate.clock.now() + timedelta(days=self.simulate_days)
           self.logger.info(f"Simulating {self.simulate_days} days")
           
         elif key == 'time':
@@ -70,6 +75,8 @@ class ScheduleSimulator:
           
         elif key == 'uv':
           self.override_uv = float(value)
+          if not math.isfinite(self.override_uv) or self.override_uv < 0:
+            raise ValueError("UV must be finite and nonnegative")
           self.logger.info(f"Override UV index: {self.override_uv}")
           
         elif key == 'season':
@@ -78,23 +85,26 @@ class ScheduleSimulator:
             self.override_season = value.capitalize()
             self.logger.info(f"Override season: {self.override_season}")
           else:
-            self.logger.warning(f"Invalid season '{value}'. Must be one of: {', '.join(valid_seasons)}")
+            raise ValueError("Invalid simulation season")
         
         elif key in ['rain', 'weather', 'disable']:
           # Override sensor.shouldDisable() - if rain=yes, sensor should disable irrigation
+          if value.lower() not in ['yes', 'true', '1', 'on', 'no', 'false', '0', 'off']:
+            raise ValueError("Rain override must be a boolean value")
           self.override_should_disable = value.lower() in ['yes', 'true', '1', 'on']
           self.logger.info(f"Override sensor disable: {self.override_should_disable}")
           
         else:
-          self.logger.warning(f"Unknown schedule option: '{key}'")
+          raise ValueError("Unknown simulation option: %s" % key)
           
-      except Exception as ex:
-        self.logger.error(f"Error parsing schedule option '{part}': {ex}")
+      except (ValueError, OverflowError) as ex:
+        self.logger.error("Invalid simulation option '%s': %s", key, ex)
+        raise ValueError("Invalid simulation option '%s': %s" % (key, ex)) from ex
   
   def get_simulation_datetime(self):
     """Get the datetime to use for simulation (either override or current)"""
     tz = pytz.timezone(self.irrigate.cfg.timezone)
-    now = tz.localize(datetime.now())
+    now = self.irrigate.clock.now().astimezone(tz)
     
     if self.override_date or self.override_time:
       # Start with current datetime
@@ -116,7 +126,10 @@ class ScheduleSimulator:
                                 second=self.override_time.second,
                                 microsecond=0)
       
-      return sim_dt
+      try:
+        return tz.localize(sim_dt.replace(tzinfo=None), is_dst=None)
+      except pytz.AmbiguousTimeError:
+        return tz.localize(sim_dt.replace(tzinfo=None), is_dst=True)
     
     return now
   
@@ -126,8 +139,10 @@ class ScheduleSimulator:
     # Get the day of week (0=Monday, 6=Sunday in Python)
     # We want Sunday as start, so adjust
     days_since_sunday = (base_date.weekday() + 1) % 7
-    sunday = base_date - timedelta(days=days_since_sunday)
-    return sunday.replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = base_date.date() - timedelta(days=days_since_sunday)
+    return pytz.timezone(self.irrigate.cfg.timezone).localize(
+      datetime.combine(sunday, datetime.min.time()), is_dst=True,
+    )
   
   def get_simulation_season(self, lat):
     """Get season for simulation (either override or calculated)"""
@@ -173,7 +188,7 @@ class ScheduleSimulator:
     
     # Loop through each day in the simulation period
     for day_offset in range(self.simulate_days):
-      sim_date = base_datetime + timedelta(days=day_offset)
+      sim_date = base_datetime.date() + timedelta(days=day_offset)
       
       for valve_name, valve in self.irrigate.valves.items():
         if not valve.enabled or not valve.schedules:
@@ -181,12 +196,14 @@ class ScheduleSimulator:
           
         for sched in valve.schedules:
           # Check if schedule should run (day and season validation)
-          season = self.irrigate.getSeason(lat, sim_date) if day_offset > 0 else self.get_simulation_season(lat)
+          season = self.override_season or self.irrigate.getSeason(lat, sim_date)
           if not self.irrigate.shouldScheduleRun(sched, check_date=sim_date, check_season=season):
             continue
           
           # Calculate when this job would be queued (using simulation date)
           schedule_time = self.irrigate.calculateScheduleTime(sched, sim_date)
+          if schedule_time is None:
+            continue
           
           # For single day simulation, filter jobs by time
           # Only include jobs scheduled at or after the simulation time
@@ -195,21 +212,36 @@ class ScheduleSimulator:
             if schedule_time < sim_datetime:
               continue  # Skip jobs that were scheduled before the simulation time
           
-          # Calculate duration with sensor factor adjustments
           base_duration = sched.duration
-          if sched.enable_uv_adjustments and hasattr(valve, 'sensor') and valve.sensor:
-            adjusted_duration = self.irrigate.calculateJobDuration(valve, sched)
-          else:
-            adjusted_duration = base_duration
+          factor = None
+          disabled = False
+          weather_note = None
+          sensor = getattr(valve, 'sensor', None)
+          if sensor and sensor.enabled:
+            try:
+              disabled = self.get_simulation_should_disable(sensor)
+            except SensorUnavailable:
+              weather_note = "Weather unavailable; continuing within the scheduled lifetime"
+            if getattr(sched, 'enable_uv_adjustments', False):
+              try:
+                uv = self.get_simulation_uv(sensor)
+                factor = uv_factor(uv, getattr(sensor, 'uv_adjustments', []))
+              except SensorUnavailable:
+                weather_note = "Weather adjustment unavailable; using configured base duration"
+          duration = adjusted_duration(sched, factor)
+          if duration == 0:
+            continue
           
           scheduled_jobs.append({
             'valve_name': valve_name,
             'valve': valve,
             'schedule_time': schedule_time,
             'base_duration': base_duration,
-            'duration_minutes': adjusted_duration,
+            'duration_minutes': duration,
             'schedule': sched,
-            'sim_date': sim_date.date()  # Store the date for grouping in output
+            'sim_date': sim_date,
+            'sensor_disabled': disabled,
+            'weather_note': weather_note
           })
     
     # Sort by scheduled time (queue order)
@@ -220,30 +252,38 @@ class ScheduleSimulator:
     """Simulate queue execution to predict actual start/end times"""
     # Track when each worker slot becomes available
     # For multi-day simulation, start at the beginning of the first day
+    tz = pytz.timezone(self.irrigate.cfg.timezone)
     if scheduled_jobs:
       first_job_date = min(job['schedule_time'] for job in scheduled_jobs)
-      start_time = first_job_date.replace(hour=0, minute=0, second=0, microsecond=0)
+      start_date = first_job_date.date()
     else:
       sim_now = self.get_simulation_datetime()
-      start_time = sim_now.replace(hour=0, minute=0, second=0, microsecond=0)
+      start_date = sim_now.date()
+    start_time = tz.localize(datetime.combine(start_date, datetime.min.time()), is_dst=True)
     
     worker_slots = [start_time for _ in range(self.irrigate.cfg.valvesConcurrency)]
+    valve_available = {}
+    dispatch_time = start_time
     
     for job in scheduled_jobs:
       # Find the earliest available worker slot
       earliest_available = min(worker_slots)
       
       # Job can't start before it's scheduled
-      actual_start = max(job['schedule_time'], earliest_available)
+      actual_start = max(job['schedule_time'], earliest_available, dispatch_time,
+                         valve_available.get(job['valve_name'], start_time))
       
       # Calculate end time
       duration_timedelta = timedelta(minutes=job['duration_minutes'])
-      actual_end = actual_start + duration_timedelta
+      actual_end = tz.normalize(actual_start + duration_timedelta)
       
       # Update job with realistic times
       job['actual_start'] = actual_start
       job['actual_end'] = actual_end
       job['queue_delay_minutes'] = (actual_start - job['schedule_time']).total_seconds() / 60
+      job['simulated_open_seconds'] = 0 if job.get('sensor_disabled') else job['duration_minutes'] * 60
+      dispatch_time = actual_start
+      valve_available[job['valve_name']] = actual_end
       
       # Update the worker slot that will handle this job
       worker_idx = worker_slots.index(earliest_available)
@@ -268,7 +308,7 @@ class ScheduleSimulator:
     lines.append("="*80)
     
     # Show override info if any
-    if any([self.override_date, self.override_time, self.override_uv, 
+    if any([self.override_date, self.override_time, self.override_uv is not None,
             self.override_season, self.override_should_disable is not None]):
       lines.append("")
       lines.append("Simulation Overrides:")
@@ -395,6 +435,10 @@ class ScheduleSimulator:
             lines.append(f"  Duration:     {job['base_duration']:.0f} minutes ({job['duration_minutes']:.0f} minutes with UV adjustment)")
           else:
             lines.append(f"  Duration:     {job['duration_minutes']:.0f} minutes")
+          if job.get('sensor_disabled'):
+            lines.append("  Status:       Weather-inhibited; waiting consumes the scheduled lifetime")
+          if job.get('weather_note'):
+            lines.append(f"  Weather:      {job['weather_note']}")
           
           job_counter += 1
     

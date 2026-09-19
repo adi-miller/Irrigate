@@ -1,0 +1,429 @@
+{
+  "alert": {
+    "data": {
+      "actual_lpm": 2.5
+    },
+    "message": "Example flow observation",
+    "severity": "warning",
+    "timestamp": "2025-06-15T10:00:00",
+    "type": "irregular_flow",
+    "valve_name": "Example Valve"
+  },
+  "baseline_commit": "a5e811ee2253a2f2c264a6cf655bcb12bc0ca222",
+  "channel_request": [
+    {
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Api-Key": "fixture-not-a-secret"
+      },
+      "json": {
+        "query": "[WARNING] irregular_flow\nTime: 2025-06-15T10:00:00\nValve: Example Valve\nMessage: Example flow observation\nData:\n  actual_lpm: 2.5",
+        "role": "irrigation",
+        "user_id": 123
+      },
+      "timeout": 10,
+      "url": "https://alerts.invalid/proactive"
+    }
+  ],
+  "http": {
+    "alert_enabled": {
+      "alert_type": "leak",
+      "enabled": false,
+      "success": true
+    },
+    "alert_settings": {
+      "setting": "leak_repeat_minutes",
+      "success": true,
+      "value": 20
+    },
+    "config": {
+      "alerts": {
+        "enabled": {
+          "irregular_flow": true,
+          "leak": true,
+          "malfunction_no_flow": true,
+          "sensor_error": true,
+          "system_exit": true
+        },
+        "irregular_flow_threshold": 2.0,
+        "leak_repeat_minutes": 15
+      },
+      "location": {
+        "latitude": 0.0,
+        "longitude": 0.0
+      },
+      "max_concurrent_valves": 1,
+      "mqtt_enabled": true,
+      "sensor_count": 1,
+      "sensors": [
+        {
+          "enabled": true,
+          "name": "Weather",
+          "precipitation": {
+            "days_to_aggregate": 3,
+            "disable_threshold_mm": 1.0
+          },
+          "type": "OpenWeatherMap"
+        }
+      ],
+      "telemetry_enabled": true,
+      "timezone": "UTC",
+      "valve_count": 1,
+      "waterflow": {
+        "enabled": true,
+        "leak_detection": true,
+        "type": "mqtt"
+      }
+    },
+    "create_schedule": {
+      "action": "schedule_created",
+      "schedule_index": 2,
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "delete_schedule": {
+      "action": "schedule_deleted",
+      "remaining_schedules": 1,
+      "schedule_index": 1,
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "disable": {
+      "action": "disabled",
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "enable": {
+      "action": "enabled",
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "enqueue": {
+      "action": "queued",
+      "duration_minutes": 2.5,
+      "queued_at": "2025-06-15T10:00:00",
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "flow_settings": {
+      "setting": "leak_detection",
+      "success": true,
+      "value": false
+    },
+    "manual": {
+      "action": "opened_manual",
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "next_runs": {
+      "cache_age_seconds": 0,
+      "cache_ttl_seconds": 300,
+      "next_runs": {
+        "Example Valve": {
+          "duration_minutes": 10,
+          "schedule_index": 0,
+          "schedule_time": "2025-06-15T11:00:00+00:00",
+          "schedule_time_iso": "2025-06-15T11:00:00+00:00"
+        }
+      }
+    },
+    "put_enabled": {
+      "action": "enabled_updated",
+      "enabled": false,
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "queue": {
+      "jobs": [
+        {
+          "duration_minutes": 12.5,
+          "is_scheduled": false,
+          "schedule_index": null,
+          "valve_name": "Example Valve"
+        }
+      ],
+      "queue_size": 1
+    },
+    "sensor_settings": {
+      "sensor": "Weather",
+      "setting": "precip_threshold",
+      "success": true,
+      "value": 2.0
+    },
+    "sensors": {
+      "sensors": [
+        {
+          "enabled": true,
+          "factor": 1.0,
+          "name": "Weather",
+          "should_disable": false,
+          "telemetry": {
+            "recentPrecip": 0.0,
+            "uv": 2.5
+          },
+          "type": "OpenWeatherMap"
+        }
+      ]
+    },
+    "simulate": "\n================================================================================\nIrrigation Schedule\n================================================================================\n\nSimulation Overrides:\n  Date:     2025-06-15\n  Time:     00:00:00\n\n\nMax concurrent valves: 1\nTimezone: UTC\nSimulation time: 2025-06-15 00:00:00\n\n--------------------------------------------------------------------------------\n\nJob #1: Example Valve\n  Scheduled:    Fixed (11:00) everyday\n  Actual Start: 11:00:00\n  Actual End:   11:10:00\n  Duration:     10 minutes\n\nJob #2: Example Valve\n  Scheduled:    Fixed (12:00) everyday\n  Actual Start: 12:00:00\n  Actual End:   12:10:00\n  Duration:     10 minutes\n\n================================================================================\n",
+    "status": {
+      "sensors": [
+        {
+          "enabled": true,
+          "factor": 1.0,
+          "name": "Weather",
+          "should_disable": false,
+          "telemetry": {
+            "recentPrecip": 0.0,
+            "uv": 2.5
+          },
+          "type": "OpenWeatherMap"
+        }
+      ],
+      "system": {
+        "current_time": "2025-06-15T10:00:00+00:00",
+        "season": "Summer",
+        "started_at": "2025-06-15T09:00:00",
+        "status": "OK",
+        "sunrise": "2025-06-15T05:57:00+00:00",
+        "sunset": "2025-06-15T18:04:12+00:00",
+        "temp_status": [],
+        "timezone": "UTC",
+        "uptime_minutes": 60
+      },
+      "valves": [
+        {
+          "enabled": true,
+          "handled": false,
+          "is_open": false,
+          "liters_daily": 5.0,
+          "liters_last": 2.5,
+          "name": "Example Valve",
+          "seconds_daily": 240,
+          "seconds_duration": 0,
+          "seconds_last": 120,
+          "seconds_remain": 0
+        }
+      ],
+      "waterflow": {
+        "enabled": true,
+        "flow_rate_lpm": 2.5,
+        "history": [
+          {
+            "timestamp": "2025-06-15T10:00:00",
+            "value": 2.5
+          }
+        ],
+        "is_active": true,
+        "last_update": "2025-06-15T10:00:00",
+        "leak_detection_enabled": true,
+        "type": "mqtt"
+      }
+    },
+    "stop": {
+      "action": "closed",
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "update_schedule": {
+      "action": "schedule_updated",
+      "schedule_index": 0,
+      "success": true,
+      "valve": "Example Valve"
+    },
+    "valve": {
+      "baseline_lpm": 2.5,
+      "baseline_sample_count": 12,
+      "baseline_std_dev": 0.2,
+      "baseline_trend": null,
+      "enabled": true,
+      "handled": false,
+      "has_waterflow": true,
+      "is_open": false,
+      "liters_daily": 5.0,
+      "liters_last": 2.5,
+      "name": "Example Valve",
+      "schedules": [
+        {
+          "days": [],
+          "duration": 10,
+          "enable_uv_adjustments": false,
+          "fixed_start_time": "11:00",
+          "index": 0,
+          "offset_minutes": 0,
+          "seasons": [],
+          "time_based_on": "fixed"
+        },
+        {
+          "days": [],
+          "duration": 10,
+          "enable_uv_adjustments": false,
+          "fixed_start_time": "12:00",
+          "index": 1,
+          "offset_minutes": 0,
+          "seasons": [],
+          "time_based_on": "fixed"
+        }
+      ],
+      "seconds_daily": 240,
+      "seconds_last": 120,
+      "seconds_remain": 0,
+      "sensor_name": "Weather",
+      "type": "3wire"
+    },
+    "valves": {
+      "valves": [
+        {
+          "enabled": true,
+          "is_open": false,
+          "name": "Example Valve",
+          "seconds_remain": 0
+        }
+      ]
+    }
+  },
+  "mqtt": {
+    "messages": [
+      {
+        "payload": 120,
+        "topic": "fixturePi/raspi/Example Valve/secondsLast"
+      },
+      {
+        "payload": 2.5,
+        "topic": "fixturePi/raspi/Example Valve/litersLast"
+      },
+      {
+        "payload": "open",
+        "topic": "fixturePi/raspi/Example Valve/status"
+      },
+      {
+        "payload": 240,
+        "topic": "fixturePi/raspi/Example Valve/dailytotal"
+      },
+      {
+        "payload": 5.0,
+        "topic": "fixturePi/raspi/Example Valve/dailyliters"
+      },
+      {
+        "payload": 60,
+        "topic": "fixturePi/raspi/Example Valve/remaining"
+      },
+      {
+        "payload": 1.0,
+        "topic": "fixturePi/raspi/sensor/Weather/factor"
+      },
+      {
+        "payload": 2.5,
+        "topic": "fixturePi/raspi/sensor/Weather/uv"
+      },
+      {
+        "payload": 0.0,
+        "topic": "fixturePi/raspi/sensor/Weather/recentPrecip"
+      },
+      {
+        "payload": "Enabled",
+        "topic": "fixturePi/raspi/sensor/Weather/status"
+      },
+      {
+        "payload": "OK",
+        "topic": "fixturePi/svc/status"
+      }
+    ],
+    "subscriptions": [
+      "fixturePi/queue/+/command",
+      "fixturePi/enabled/+/command",
+      "fixturePi/forceopen/+/command",
+      "fixturePi/forceclose/+/command"
+    ]
+  },
+  "routes": [
+    [
+      "DELETE",
+      "/api/valves/{valve_name}/schedules/{schedule_index}"
+    ],
+    [
+      "GET",
+      "/"
+    ],
+    [
+      "GET",
+      "/api/config"
+    ],
+    [
+      "GET",
+      "/api/next-runs"
+    ],
+    [
+      "GET",
+      "/api/queue"
+    ],
+    [
+      "GET",
+      "/api/sensors"
+    ],
+    [
+      "GET",
+      "/api/status"
+    ],
+    [
+      "GET",
+      "/api/valves"
+    ],
+    [
+      "GET",
+      "/api/valves/{valve_name}"
+    ],
+    [
+      "POST",
+      "/api/config/alerts/enabled"
+    ],
+    [
+      "POST",
+      "/api/config/alerts/settings"
+    ],
+    [
+      "POST",
+      "/api/config/sensors/{sensor_name}"
+    ],
+    [
+      "POST",
+      "/api/config/waterflow"
+    ],
+    [
+      "POST",
+      "/api/simulate"
+    ],
+    [
+      "POST",
+      "/api/valves/{valve_name}/disable"
+    ],
+    [
+      "POST",
+      "/api/valves/{valve_name}/enable"
+    ],
+    [
+      "POST",
+      "/api/valves/{valve_name}/queue"
+    ],
+    [
+      "POST",
+      "/api/valves/{valve_name}/schedules"
+    ],
+    [
+      "POST",
+      "/api/valves/{valve_name}/start-manual"
+    ],
+    [
+      "POST",
+      "/api/valves/{valve_name}/stop"
+    ],
+    [
+      "PUT",
+      "/api/valves/{valve_name}/enabled"
+    ],
+    [
+      "PUT",
+      "/api/valves/{valve_name}/schedules/{schedule_index}"
+    ]
+  ]
+}

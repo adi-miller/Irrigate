@@ -51,13 +51,14 @@
             </div>
         </header>
 
+        <div id="system-status" class="system-status warning" role="status" aria-live="polite">
+            <span class="status-indicator warning">●</span>
+            <span class="status-text">Connecting to the controller. Valve positions are unverified.</span>
+        </div>
+
         <!-- Waterflow History Bar -->
         <div id="waterflow-history-bar" class="waterflow-history-bar" style="display: none;">
             <div class="status-overlay-container">
-                <div id="system-status" class="system-status">
-                    <span class="status-indicator">●</span>
-                    <span class="status-text">Loading...</span>
-                </div>
                 <div id="waterflow-status" class="waterflow-status" style="display: none;">
                     <span class="waterflow-icon">💧</span>
                     <span id="waterflow-text" class="waterflow-text">--</span>
