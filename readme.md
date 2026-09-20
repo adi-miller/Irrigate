@@ -186,6 +186,34 @@ Before any observation, the legacy numeric status field remains `0` as an
 unavailable placeholder, with `last_update: null` and empty history; it is not a
 measured zero. Consumers must use health/freshness rather than that number alone.
 
+**Source liveness is not measurement freshness.** The MQTT meter normally reports
+zero flow every **600 seconds while idle**, but reports much faster while watering.
+When every valve is acknowledged closed (including sensor-paused or queued
+operations), no actuator state is uncertain, and the latest valid reading is
+zero, monitoring allows **600 seconds plus 60 seconds of heartbeat jitter grace**.
+After that 660-second bound it raises one `monitoring_unavailable` incident until
+a real valid heartbeat recovers it. Positive flow with closed valves and
+unknown/faulted/possibly-open states retain the 60-second bound. Disconnection
+or invalid readings make source health unavailable immediately; neither renews
+the heartbeat nor clears an invalid-reading error without a valid observation.
+
+Before the first reading, the same bounded idle wait starts only after successful
+startup Close reconciliation, once per process. Opening from healthy idle allows
+at most **60 seconds from the Open command** for the first active report; later
+reports must remain fresh within the existing 60-second measurement limit.
+An opening grace is consumed once per valid observation (or initial startup
+wait), not renewed by polling, reconnects, repeated Close/Open, or sensor
+pause/resume. Closing without an intervening observation does not erase that
+pending active-report deadline. No grace extends a watering deadline.
+
+For an enabled meter, `/api/health` adds
+`monitoring.waterflow.source.available` and `.reason` for this liveness policy.
+The existing `available`, `fresh`, `age_seconds` and `reason` still describe the
+strict measurement snapshot. The UI uses source liveness for its monitoring
+warning, but still marks an old reading/history stale rather than displaying a
+fresh zero. Reading status/health never renews timers or creates observations;
+the heartbeat tolerance is not used for accounting, leak or no-flow decisions.
+
 Flow integration uses the reported aggregate L/min rate over observed intervals.
 Per-valve liters are **estimates**, not dedicated per-valve meter readings. Only
 fresh intervals with exactly one eligible commanded-open valve are attributed;

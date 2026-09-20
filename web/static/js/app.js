@@ -193,6 +193,12 @@ function waterflowFresh() {
     return hasFreshStatus() && flow?.enabled === true && flow.available === true && flow.fresh === true;
 }
 
+function waterflowSourceAvailable() {
+    const flow = healthData?.monitoring?.waterflow;
+    return hasFreshStatus() && flow?.enabled === true &&
+        (flow.source ? flow.source.available === true : waterflowFresh());
+}
+
 function sensorFresh(sensor) {
     const health = healthData?.monitoring?.sensors?.find(item => item.name === sensor.name);
     return hasFreshStatus() && !sensor.error && health?.available === true && health.fresh === true;
@@ -373,7 +379,7 @@ function updateSystemStatus(system) {
             messages.push(`No-flow warning for ${flowAlarms.join(', ')}.`);
         }
         const monitoring = healthData.monitoring;
-        if (monitoring?.waterflow?.enabled && !waterflowFresh()) {
+        if (monitoring?.waterflow?.enabled && !waterflowSourceAvailable()) {
             if (severity === 'ok') severity = 'warning';
             messages.push('Waterflow is unavailable or stale; totals may be incomplete.');
         }

@@ -8,6 +8,10 @@ from clock import SystemClock
 
 
 class BaseWaterflow:
+  FRESHNESS_SECONDS = 60
+  IDLE_HEARTBEAT_SECONDS = 600
+  IDLE_HEARTBEAT_GRACE_SECONDS = 60
+
   def __init__(self, logger, config, clock=None):
     self.logger = logger
     self.config = config
@@ -20,6 +24,8 @@ class BaseWaterflow:
     self._lastLiter_1m = 0.0
     self._lastupdate = None
     self._received = None
+    self._invalid_reading = False
+    self._opening_deadline = None
     self._history_received = None
     self._history = deque(maxlen=120)
     self._lock = threading.RLock()
@@ -39,8 +45,9 @@ class BaseWaterflow:
 
   @enabled.setter
   def enabled(self, value):
-    self._enabled = value
-    self._record_availability()
+    with self._lock:
+      self._enabled = value
+      self._record_availability()
 
   @property
   def started(self):
@@ -48,8 +55,9 @@ class BaseWaterflow:
 
   @started.setter
   def started(self, value):
-    self._started = value
-    self._record_availability()
+    with self._lock:
+      self._started = value
+      self._record_availability()
 
   @property
   def connected(self):
@@ -57,8 +65,9 @@ class BaseWaterflow:
 
   @connected.setter
   def connected(self, value):
-    self._connected = value
-    self._record_availability()
+    with self._lock:
+      self._connected = value
+      self._record_availability()
 
   def lastLiter_1m(self):
     """Last observation, not a freshness assertion; consumers must read snapshot."""
@@ -66,17 +75,24 @@ class BaseWaterflow:
       return self._lastLiter_1m
 
   def setLastLiter_1m(self, value):
-    if isinstance(value, bool):
-      raise ValueError("Water flow must be a finite nonnegative number")
-    value = float(value)
-    if not math.isfinite(value) or value < 0:
-      raise ValueError("Water flow must be a finite nonnegative number")
+    try:
+      if isinstance(value, bool):
+        raise ValueError("Water flow must be a finite nonnegative number")
+      value = float(value)
+      if not math.isfinite(value) or value < 0:
+        raise ValueError("Water flow must be a finite nonnegative number")
+    except (ValueError, TypeError, OverflowError):
+      with self._lock:
+        self._invalid_reading = True
+      raise
     now = self.clock.monotonic()
     timestamp = self.clock.now().replace(tzinfo=None)
     with self._lock:
       self._lastLiter_1m = value
       self._lastupdate = timestamp
       self._received = now
+      self._invalid_reading = False
+      self._opening_deadline = None
       self._samples.append((now, value))
       self.last_error = None
       if self._history_received is None or now - self._history_received >= 60:
@@ -86,7 +102,7 @@ class BaseWaterflow:
   def snapshot(self):
     with self._lock:
       age = None if self._received is None else max(0.0, self.clock.monotonic() - self._received)
-      fresh = age is not None and age <= 60
+      fresh = age is not None and age <= self.FRESHNESS_SECONDS
       available = self.enabled and self.started and self.connected and fresh
       reason = None
       if not self.enabled:
@@ -104,9 +120,35 @@ class BaseWaterflow:
         "age_seconds": age, "reason": reason, "enabled": self.enabled,
       }
 
-  def get_health(self):
-    return {key: value for key, value in self.snapshot().items()
-            if key not in ("timestamp", "received", "value")}
+  def get_health(self, *, idle=False, active=False, startup_since=None):
+    with self._lock:
+      sample = self.snapshot()
+      source = {"available": sample["available"], "reason": sample["reason"]}
+      if self.enabled and self.started and self.connected:
+        now = self.clock.monotonic()
+        if self._invalid_reading:
+          source = {"available": False, "reason": "invalid reading"}
+        elif (idle or active) and self._opening_deadline is not None:
+          available = now <= self._opening_deadline
+          source = {"available": available, "reason": None if available else "no active reading"}
+        elif idle and (sample["value"] == 0 or
+                       (sample["received"] is None and startup_since is not None)):
+          age = sample["age_seconds"] if sample["received"] is not None else max(0.0, now - startup_since)
+          available = age <= self.IDLE_HEARTBEAT_SECONDS + self.IDLE_HEARTBEAT_GRACE_SECONDS
+          source = {"available": available, "reason": None if available else "missed idle heartbeat"}
+      health = {key: value for key, value in sample.items() if key not in ("timestamp", "received", "value")}
+      if self.enabled:
+        health["source"] = source
+      return health
+
+  def expect_active(self, *, startup_since=None):
+    """Spend at most one opening grace per real observation, never per poll/resume."""
+    with self._lock:
+      if (not self.enabled or self._opening_deadline is not None
+          or (self._received is not None and self._lastLiter_1m != 0)):
+        return
+      if self.get_health(idle=True, startup_since=startup_since)["source"]["available"]:
+        self._opening_deadline = self.clock.monotonic() + self.FRESHNESS_SECONDS
 
   def getHistory(self):
     with self._lock:
@@ -118,14 +160,14 @@ class BaseWaterflow:
       availability = list(self._availability)
     boundaries = {start, end}
     for stamp, _ in samples:
-      boundaries.update(value for value in (stamp, stamp + 60) if start < value < end)
+      boundaries.update(value for value in (stamp, stamp + self.FRESHNESS_SECONDS) if start < value < end)
     boundaries.update(stamp for stamp, _ in availability if start < stamp < end)
     ordered = sorted(boundaries)
     result = []
     for left, right in zip(ordered, ordered[1:]):
       sample = next(((stamp, value) for stamp, value in reversed(samples) if stamp <= left), None)
       connected = next((state for stamp, state in reversed(availability) if stamp <= left), False)
-      valid = connected and sample is not None and left < sample[0] + 60
+      valid = connected and sample is not None and left < sample[0] + self.FRESHNESS_SECONDS
       result.append((left, right, sample[1] if valid else None))
     return result
 

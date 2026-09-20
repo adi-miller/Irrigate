@@ -993,6 +993,67 @@ test('unavailable waterflow is not fresh zero and historical zero liters do not 
     assert.equal(h.element('waterflow-text').textContent, '0 L/min');
 });
 
+test('healthy idle heartbeat removes the monitoring warning without making old zero fresh', async () => {
+    const h = harness();
+    h.state.status.waterflow.enabled = true;
+    Object.assign(h.state.health.monitoring.waterflow, {
+        enabled: true, available: false, fresh: false, age_seconds: 600, reason: 'stale reading',
+        source: { available: true, reason: null }
+    });
+    for (let i = 0; i < 3; i++) {
+        await h.ready();
+        assert.equal(h.element('system-status').classList.contains('ok'), true);
+        assert.doesNotMatch(h.element('system-status').textContent, /Waterflow is unavailable/);
+        assert.equal(h.run('waterflowSourceAvailable()'), true);
+        assert.equal(h.run('waterflowFresh()'), false);
+        assert.match(h.element('waterflow-text').textContent, /unavailable.*stale/);
+        assert.doesNotMatch(h.element('waterflow-text').textContent, /0 L\/min/);
+        assert.equal(h.element('waterflow-history-bar').classList.contains('stale'), true);
+    }
+    h.state.health.monitoring.waterflow.source = { available: false, reason: 'missed idle heartbeat' };
+    await h.ready();
+    assert.equal(h.element('system-status').classList.contains('warning'), true);
+    assert.match(h.element('system-status').textContent, /Waterflow is unavailable/);
+    assert.equal(h.writes().length, 0);
+});
+
+test('invalid source data warns even while the previous valid measurement is still fresh', async () => {
+    const h = harness();
+    h.state.status.waterflow.enabled = true;
+    Object.assign(h.state.health.monitoring.waterflow, {
+        enabled: true, available: true, fresh: true, age_seconds: 1, reason: null,
+        source: { available: false, reason: 'invalid reading' }
+    });
+    await h.ready();
+    assert.equal(h.run('waterflowFresh()'), true);
+    assert.equal(h.run('waterflowSourceAvailable()'), false);
+    assert.equal(h.element('system-status').classList.contains('warning'), true);
+    assert.match(h.element('system-status').textContent, /Waterflow is unavailable/);
+    assert.doesNotMatch(h.element('system-status').textContent, /no-flow|controller fault/i);
+    assert.equal(h.writes().length, 0);
+});
+
+test('source health retains strict legacy fallback and cannot override stale API status', async () => {
+    const h = harness();
+    h.state.status.waterflow.enabled = true;
+    Object.assign(h.state.health.monitoring.waterflow, { enabled: true, available: true, fresh: true });
+    await h.ready();
+    assert.equal(h.run('waterflowSourceAvailable()'), true);
+    Object.assign(h.state.health.monitoring.waterflow, { available: false, fresh: false });
+    await h.ready();
+    assert.equal(h.run('waterflowSourceAvailable()'), false);
+    assert.equal(h.element('system-status').classList.contains('warning'), true);
+    h.state.health.monitoring.waterflow.source = { available: true, reason: null };
+    await h.ready();
+    assert.equal(h.run('waterflowSourceAvailable()'), true);
+    h.routes.set('GET /api/health', () => response({}, 503));
+    await h.ready();
+    assert.equal(h.run('waterflowSourceAvailable()'), false);
+    assert.equal(h.element('system-status').classList.contains('warning'), true);
+    assert.match(h.element('waterflow-text').textContent, /unavailable.*stale/);
+    assert.equal(h.writes().length, 0);
+});
+
 test('next-runs has independent versioning and cannot resurrect status or action availability', async () => {
     const h = harness();
     await h.ready();

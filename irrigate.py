@@ -482,7 +482,9 @@ class Irrigate:
     lost = False
     resources = [("sensor", sensor.name, sensor.get_health()) for sensor in self.sensors.values()]
     if self.waterflow:
-      resources.append(("resource", "waterflow", self.waterflow.get_health()))
+      health = self.controller.get_waterflow_health()
+      source = health["source"] if health["enabled"] else health
+      resources.append(("resource", "waterflow", {"enabled": health["enabled"], **source}))
     if self.cfg.mqttEnabled and not self.offline:
       resources.append(("resource", "mqtt", {"enabled": True, "available": self.mqtt.mqttStarted,
                                   "reason": "MQTT disconnected"}))
@@ -654,7 +656,7 @@ class Irrigate:
       health["ready"] = health["ready"] and running
     health["monitoring"] = {
       "mqtt": {"enabled": self.cfg.mqttEnabled, "connected": self.mqtt.mqttStarted},
-      "waterflow": self.waterflow.get_health() if self.waterflow else {
+      "waterflow": self.controller.get_waterflow_health() if self.waterflow else {
         "enabled": False, "available": False, "fresh": False, "age_seconds": None, "reason": "not configured",
       },
       "sensors": [sensor.get_health() for sensor in self.sensors.values()],
