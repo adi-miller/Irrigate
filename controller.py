@@ -56,6 +56,7 @@ class ValveController:
     self._runtime_enabled = {}
     self._identifier = 0
     self._startup_complete = False
+    self._waterflow_startup_since = None
     self._stopping = False
     self._last_mono = clock.monotonic()
     self._last_wall = clock.now()
@@ -91,12 +92,31 @@ class ValveController:
 
   def reconcile_startup(self):
     with self.lock:
+      initial = not self._startup_complete
       for valve in self.valves.values():
         self._close_driver(valve, clear_fault=True)
       self._startup_complete = True
       self._last_mono = self.clock.monotonic()
       self._last_wall = self.clock.now()
+      if initial and self.ready:
+        self._waterflow_startup_since = self._last_mono
       return self.ready
+
+  def _waterflow_state(self):
+    if not self.ready or any(
+        self.states[name] not in ("closed", "waiting", "paused", "open")
+        or valve.is_open != (self.states[name] == "open") for name, valve in self.valves.items()):
+      return "uncertain"
+    if any(valve.is_open for valve in self.valves.values()):
+      return "active"
+    return "idle" if self.closed_since is not None else "uncertain"
+
+  def get_waterflow_health(self):
+    with self.lock:
+      state = self._waterflow_state()
+      return self.waterflow.get_health(
+        idle=state == "idle", active=state == "active", startup_since=self._waterflow_startup_since,
+      )
 
   def _emit(self, valve):
     self._events.append(self.valve_snapshot(valve.name))
@@ -149,6 +169,8 @@ class ValveController:
         or (operation.kind != "manual" and
             (not valve.enabled or self.clock.monotonic() >= operation.deadline))):
       return False
+    if self.waterflow and self._waterflow_state() == "idle":
+      self.waterflow.expect_active(startup_since=self._waterflow_startup_since)
     self.closed_since = None
     try:
       valve.open()

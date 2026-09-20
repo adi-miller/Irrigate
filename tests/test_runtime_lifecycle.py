@@ -45,6 +45,9 @@ def test_background_deadline_closes_while_notification_is_blocked(tmp_path):
   )
   try:
     app.start()
+    app.alerts.alert(
+      AlertType.MONITORING_UNAVAILABLE, "Injected notification stall", subject="resource:fixture",
+    )
     assert entered.wait(2), "Fake notification was not started"
     closed.clear()
     app.controller.start_manual("Valve A", 0.002)
