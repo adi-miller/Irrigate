@@ -1,158 +1,140 @@
-import time
-import model
 import threading
+
 from paho.mqtt import client
 
+from model import Job
+
+
+def stop_client(mqtt_client, logger, timeout=2):
+  errors = []
+
+  def stop():
+    try:
+      mqtt_client.disconnect()
+      mqtt_client.loop_stop()
+    except Exception as error:
+      errors.append(error)
+      logger.exception("MQTT shutdown failed")
+
+  worker = threading.Thread(target=stop, name="MqttStop", daemon=True)
+  worker.start()
+  worker.join(timeout)
+  if worker.is_alive():
+    logger.error("MQTT transport did not stop within the shutdown bound")
+  return not worker.is_alive() and not errors
+
+
 class Mqtt:
-  def __init__(self, irrigate):
+  def __init__(self, irrigate, client_factory=None):
+    self.irrigate = irrigate
     self.logger = irrigate.logger
     self.cfg = irrigate.cfg
     self.valves = irrigate.valves
-    self.irrigate = irrigate
+    self.client_factory = client_factory
     self.mqttStarted = False
+    self.mqttClient = None
+    self.topicPrefix = str(self.cfg.mqttClientName) + "/"
+    self.last_error = None
 
   def start(self):
-    self.logger.info("Connecting to MQTT service '%s'..." % self.cfg.mqttHostName)
+    if self.mqttClient is not None:
+      return
     try:
-      self.mqttClient = self.getMyMqtt()
-      self.topicPrefix = str(self.cfg.mqttClientName) + "/"
-      
+      self.mqttClient = (self.client_factory() if self.client_factory else
+                         client.Client(client.CallbackAPIVersion.VERSION1, self.cfg.mqttClientName))
+      self.mqttClient.on_connect = self.on_connect
+      self.mqttClient.on_disconnect = self.on_disconnect
       self.mqttClient.on_message = self.on_message
-
-      worker = threading.Thread(target=self.mqttLooper, args=())
-      worker.daemon = True
-      worker.start()
-      while not self.mqttClient.is_connected():
-        self.logger.info("Waiting for MQTT connection...")
-        time.sleep(1)
-      self.mqttStarted = True
-
-      self.logger.info("MQTT connected: %s" % self.mqttClient.is_connected())
-    except Exception as ex:
-      self.logger.error("Error starting MQTT: %s" % format(ex))
+      self.mqttClient.reconnect_delay_set(min_delay=1, max_delay=30)
+      self.mqttClient.connect_async(self.cfg.mqttHostName)
+      result = self.mqttClient.loop_start()
+      if result not in (None, 0):
+        raise RuntimeError("MQTT loop failed to start: %s" % result)
+    except Exception:
+      self.last_error = "MQTT startup failed"
+      self.logger.exception(self.last_error)
+      self.shutdown()
+      raise
 
   def registerTopics(self, topicPrefix, topic):
-    topicStr = topicPrefix + topic + "/+/command"
-    self.mqttClient.subscribe(topicStr)
-    self.logger.info("Topic '%s' registered." % topicStr)
+    self.mqttClient.subscribe(topicPrefix + topic + "/+/command")
 
-  def getMyMqtt(self):
-    mqttClient = client.Client(client.CallbackAPIVersion.VERSION1, self.cfg.mqttClientName)
-    mqttClient.user_data_set(self)
-    mqttClient.on_connect = self.on_connect
-    mqttClient.on_disconnect = self.on_disconnect
-    mqttClient.connect(self.cfg.mqttHostName)
-    return mqttClient
-
-  def mqttLooper(self):
-    self.logger.info("MQTT thread started...")
-    while not self.irrigate.terminated:
-      try:
-        self.mqttClient.loop_forever(retry_first_connection=True)
-        # If we reach here, loop exited
-        if self.irrigate.terminated:
-          break
-        self.logger.warning("MQTT loop exited, reconnecting...")
-        time.sleep(5)
-      except Exception as ex:
-        self.logger.error("MQTT loop exception: %s. Reconnecting..." % format(ex))
-        if self.irrigate.terminated:
-          break
-        time.sleep(5)
-    self.logger.info("MQTT thread terminated")
-
-  def on_connect(self, client, userdata, flags, rc):
-    if rc == 0:
-      self.logger.info("Connected to MQTT Broker. Registering subscriptions...")
-      self.mqttStarted = True
-      # Re-register all subscriptions on every connect/reconnect
-      self.registerTopics(self.topicPrefix, "queue")
-      self.registerTopics(self.topicPrefix, "enabled")
-      self.registerTopics(self.topicPrefix, "forceopen")
-      self.registerTopics(self.topicPrefix, "forceclose")
+  def on_connect(self, mqtt_client, userdata, flags, rc):
+    self.mqttStarted = rc == 0
+    if self.mqttStarted:
+      self.last_error = None
+      for topic in ("queue", "enabled", "forceopen", "forceclose"):
+        self.registerTopics(self.topicPrefix, topic)
+      self.irrigate.reset_telemetry_cursor()
     else:
-      self.logger.error("Failed to connect, return code %d\n" % (rc))
+      self.last_error = "MQTT connection rejected: %s" % rc
+      self.logger.error(self.last_error)
 
-  def on_disconnect(self, client, userdata, rc):
+  def on_disconnect(self, mqtt_client, userdata, rc):
     self.mqttStarted = False
-    if rc != 0:
-      self.logger.warning("MQTT connection lost unexpectedly (code: %d). Will attempt reconnection." % rc)
-    else:
-      self.logger.info("MQTT disconnected gracefully.")
+    if not self.irrigate.terminated:
+      self.logger.warning("MQTT disconnected (code %s)", rc)
 
-  def shutdown(self):
-    """Gracefully shutdown MQTT connection"""
-    if self.mqttClient:
-      try:
-        self.logger.info("Shutting down MQTT connection...")
-        self.mqttClient.disconnect()
-        self.mqttStarted = False
-      except Exception as ex:
-        self.logger.error("Error during MQTT shutdown: %s" % format(ex))
+  def on_message(self, mqtt_client, userdata, msg):
+    self.irrigate.submit_mqtt(msg.topic, msg.payload)
 
-  def on_message(self, client, userdata, msg):
-    self.logger.info("Received message: " + str(msg.topic))
-    self.processMessages(msg.topic, msg.payload)
+  def shutdown(self, timeout=2):
+    self.mqttStarted = False
+    if self.mqttClient is None:
+      return True
+    return stop_client(self.mqttClient, self.logger, timeout)
 
   def publish(self, topic, payload):
-    topicPrefix = str(self.cfg.mqttClientName)
-    if not topic.startswith("/"):
-      topicPrefix = topicPrefix + "/raspi/"
-    
-    full_topic = topicPrefix + topic
-    
-    if not self.mqttStarted:
-      self.logger.debug("MQTT not connected. Message for topic '%s' not published." % full_topic)
+    full_topic = str(self.cfg.mqttClientName) + ("" if topic.startswith("/") else "/raspi/") + topic
+    if not self.mqttStarted or self.mqttClient is None:
       return False
-    
     try:
       result = self.mqttClient.publish(full_topic, payload)
       if result.rc != 0:
-        self.logger.warning("MQTT publish failed for topic '%s' with return code %d" % (full_topic, result.rc))
+        self.logger.warning("MQTT publish failed for '%s' (code %s)", full_topic, result.rc)
         return False
-      
-      self.logger.debug("MQTT message published for topic '%s' payload '%s'." % (full_topic, payload))
       return True
-      
-    except Exception as ex:
-      self.logger.error("MQTT publish exception for topic '%s': %s" % (full_topic, format(ex)))
+    except Exception:
+      self.logger.exception("MQTT publish failed for '%s'", full_topic)
       return False
 
-  def processMessages(self, topic, payload):
-    self.logger.debug("MQTT message received for topic '%s' payload '%s'." % (topic, payload))
+  def processMessages(self, topic, payload, *, command_sequence=None):
+    from controller import ControlError, duration_minutes
     try:
-      topicParts = topic.split("/")
-      valveName = topicParts[2].replace('_', ' ')
-      if valveName not in self.valves:
-        raise Exception(f"Valve name '{valveName}' does not exist in configuration. Ignoring message.")
-
-      valves = self.valves
-
-      if topicParts[1] == "queue":
-        self.irrigate.queueJob(model.Job(valve=valves[valveName], sched=None, duration=float(payload)))
-        return
-
-      try:
-        if topicParts[1] == "enabled":
-          if int(payload) == 0:
-            valves[valveName].enabled = False
-            self.logger.info("Disabled valve '%s' via MQTT command" % valveName)
-            return
-          elif int(payload) == 1:
-            valves[valveName].enabled = True
-            self.logger.info("Enabled valve '%s' via MQTT command" % valveName)
-            return
-
-        if topicParts[1] == "forceopen":
-          valves[valveName].open()
-          return
-
-        if topicParts[1] == "forceclose":
-          valves[valveName].close()
-          return
-      finally:
-        self.irrigate.telemetryValve(valves[valveName])
-
-      self.logger.warning("Invalid payload received for topic %s = '%s'" % (topic, payload))
-    except Exception as ex:
-      self.logger.error("Error parsing payload received for topic %s = '%s'. Error message: '%s'" % (topic, payload, format(ex)))
+      parts = topic.split("/")
+      if len(parts) != 4 or parts[3] != "command":
+        raise ValueError("Invalid command topic")
+      name = parts[2].replace("_", " ")
+      if name not in self.valves:
+        raise ValueError("Unknown valve")
+      action = parts[1]
+      if action == "queue":
+        duration = duration_minutes(payload)
+        self.irrigate.queueJob(Job(self.valves[name], duration, None))
+      elif action == "enabled":
+        if isinstance(payload, bool):
+          raise ValueError("Enabled payload must be 0 or 1")
+        value = int(payload)
+        if value not in (0, 1):
+          raise ValueError("Enabled payload must be 0 or 1")
+        self.irrigate.controller.set_enabled(name, value == 1)
+      elif action == "forceopen":
+        duration = None if payload in (b"", "") else duration_minutes(payload, manual=True)
+        if command_sequence is None:
+          self.irrigate.controller.start_manual(name, duration)
+        else:
+          self.irrigate.controller.start_manual(name, duration, command_sequence=command_sequence)
+      elif action == "forceclose":
+        if command_sequence is None:
+          self.irrigate.controller.stop(name)
+        else:
+          self.irrigate.controller.stop(name, command_sequence=command_sequence)
+      else:
+        raise ValueError("Unknown command")
+      return True
+    except (ControlError, ValueError, TypeError, OverflowError) as error:
+      self.logger.error("MQTT command rejected on '%s': %s", topic, error)
+      return False
+    except Exception:
+      self.logger.exception("MQTT command failed on '%s'", topic)
+      return False

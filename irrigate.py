@@ -1,620 +1,589 @@
-import sys
-import time
-import pytz
-import model
-import queue
-import config
-import signal
-import getopt
+import argparse
 import logging
-import calendar
-import traceback
+import math
+import queue
+import signal
+import sys
+import tempfile
 import threading
-from mqtt import Mqtt
-from suntime import Sun
 from datetime import datetime
-from datetime import timedelta
-from threading import Thread
-from api_server import run_api_server
-from valve_metrics import write_daily_summaries, load_baselines
-from schedule_simulator import ScheduleSimulator
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytz
+
+import config
 from alerts import AlertManager, AlertType
+from clock import SystemClock
+from controller import ControlError, ValveController
+from model import Job
+from mqtt import Mqtt
+from runtime_logging import AsyncLogHandler, CheckedFileHandler
+from scheduling import adjusted_duration, schedule_time, season_for, should_run
+from sensors.base_sensor import TestSensor
+from sensors.openweathermap_sensor import OpenWeatherMapSensor
+from valves import TestValve, ThreeWireValve
+from waterflows import MqttWaterflow, TestWaterflow
 
-def main(argv):
-  # Check for --simulate flag (with or without =)
-  simulate_flag = False
-  simulateOptions = ""
-  
-  for arg in sys.argv[1:]:
-    if arg == "--simulate":
-      simulate_flag = True
-      break
-    elif arg.startswith("--simulate="):
-      simulate_flag = True
-      simulateOptions = arg.split("=", 1)[1]
-      break
-  
-  # Parse other options normally (filter out --simulate so getopt doesn't complain)
-  filtered_args = [arg for arg in sys.argv[1:] if not arg.startswith("--simulate")]
-  options, remainder = getopt.getopt(filtered_args, "", ["config=", "test"])
 
-  configFilename = "config.json"
-  test = False
+class OfflineChannel:
+  def __init__(self):
+    self.sent = []
 
-  for opt, arg in options:
-    if opt == "--config":
-      configFilename = arg
-    elif opt == "--test":
-      test = True
-
-  irrigate = Irrigate(configFilename)
-
-  if simulate_flag:
-    simulator = ScheduleSimulator(irrigate)
-    simulator.parse_schedule_options(simulateOptions)
-    simulator.print_schedule()
-    sys.exit(0)
-
-  if test:
-    irrigate.logger.info("Entering test mode. CTRL-C to exit...")
-    while True:
-      for v in irrigate.valves.values():
-        v.handler.open()
-        time.sleep(0.2)
-      time.sleep(3)
-      for v in irrigate.valves.values():
-        v.handler.close()
-        time.sleep(0.2)
-      time.sleep(2)
-
-  # Start FastAPI server in background thread
-  api_thread = threading.Thread(target=run_api_server, args=(irrigate,))
-  api_thread.daemon = True
-  api_thread.start()
-  
-  irrigate.start(False)
-  try:
-    while not irrigate.terminated:
-      time.sleep(1)
-  except KeyboardInterrupt:
-    irrigate.terminated = True
-  irrigate.logger.info("Program terminated. Waiting for all threads to finish...")
-
-class Irrigate:
-  def __init__(self, configFilename):
-
-    signal.signal(signal.SIGTERM, self.exit_gracefully)
-
-    self.startTime = datetime.now()
-    self.logger = self.getLogger()
-    self.logger.info("Reading configuration file '%s'..." % configFilename)
-    self.terminated = False
-    self._lastAllClosed = None
-    self._intervalDict = {}
-    self._status = None
-    self._tempStatus = {}
-    self.alerts = None  # Will be initialized in init()
-    self.init(configFilename)
-    self.mqtt = Mqtt(self)
-    self.createThreads()
-
-  def exit_gracefully(self, *args):
-    self.terminated = True
-    
-    # Alert system exit
-    if self.alerts:
-      self.alerts.alert(AlertType.SYSTEM_EXIT, "Graceful shutdown (SIGTERM)")
-    
-    # Close all manually opened valves (is_open but not handled by a job)
-    for valve in self.valves.values():
-      if valve.is_open and not valve.handled:
-        valve.is_open = False
-        valve.close()
-        self.logger.info(f"Closed manually opened valve '{valve.name}' on shutdown")
-    
-    # Gracefully shutdown MQTT connections
-    if self.mqtt:
-      self.mqtt.shutdown()
-    if self.waterflow and hasattr(self.waterflow, 'shutdown'):
-      self.waterflow.shutdown()
-
-  def start(self, test = True):
-    if self.cfg.mqttEnabled:
-      self.logger.info("Starting MQTT...")
-      self.mqtt.start()
-
-    self.logger.debug("Starting worker threads...")
-    for worker in self.workers:
-      self.logger.info("Starting worker thread '%s'." % worker.name)
-      worker.daemon = test
-      worker.start()
-
-    self.logger.debug("Starting sensors...")
-    for _sensor in self.sensors.values():
-      if _sensor.enabled and not _sensor.started:
-        try:
-          self.logger.info(f"Starting sensor '{_sensor.config.type}'.")
-          _sensor.start()
-        except Exception as ex:
-          self.setStatus("InitErrSensor")
-          self.logger.error(f"Error starting sensor '{_sensor.name}': '{format(ex)}'.")
-
-    self.logger.debug("Starting waterflows...")
-    if self.waterflow is not None and self.waterflow.enabled:
-      try:
-        self.logger.info("Starting waterflow.")
-        self.waterflow.start()
-      except Exception as ex:
-        self.setStatus("InitErrWaterflow")
-        self.logger.error(f"Error starting waterflow 'format(ex)'.")
-
-    self.logger.info("Starting timer thread '%s'." % self.timer.name)
-    self.timer.start()
-
-    if self._status is None:
-      self.setStatus("OK")
-
-  def init(self, cfgFilename):
-    self.cfg = config.Config(self.logger, cfgFilename)
-    self.valves = self.cfg.valves
-    self.sensors = self.cfg.sensors
-    self.waterflow = self.cfg.waterflow
-    # self.waterflows = self.cfg.waterflows
-    self.q = queue.Queue()
-    
-    # Load valve baselines from historical data
-    from valve_metrics import load_baselines
-    load_baselines(self.valves, self.logger)
-    
-    # Initialize alert manager (pass self for schedule evaluation reuse)
-    self.alerts = AlertManager(self.logger, self.cfg, self)
-
-  def createThreads(self):
-    self.workers = []
-    for i in range(self.cfg.valvesConcurrency):
-      worker = Thread(target=self.valveThread, args=())
-      worker.daemon = False
-      worker.name = f"ValveTh{i}"
-      self.workers.append(worker)
-
-    self.timer = Thread(target=self.timerThread, args=())
-    self.timer.daemon = True
-    self.timer.name = "TimerTh"
-
-  def calculateScheduleTime(self, sched, now):
-    """Calculate when a schedule should trigger
-    
-    Args:
-        sched: Schedule object with time configuration
-        now: datetime to use for schedule calculation
-    
-    Returns:
-        datetime when the schedule should trigger
-    """
-    timezone = self.cfg.timezone
-    
-    if sched.time_based_on == 'fixed':
-      hours, minutes = sched.fixed_start_time.split(":")
-      startTime = now.replace(hour=int(hours), minute=int(minutes), second=0, microsecond=0)
-      if not startTime.tzinfo:
-        tz = pytz.timezone(timezone)
-        startTime = tz.normalize(startTime.replace(tzinfo=tz))
-    else:
-      lat, lon = self.cfg.getLatLon()
-      sun = Sun(lat, lon)
-      # Sun library requires naive datetime, so remove tzinfo
-      now_naive = now.replace(tzinfo=None) if now.tzinfo else now
-      tz = pytz.timezone(timezone)
-      
-      if self.everyXMinutes("eval_debuger", 60, True):
-        self.logger.info(f"***")
-        sunrise = sun.get_sunrise_time(at_date=now_naive, time_zone=tz)
-        sunrise = sunrise.replace(year=now.year, month=now.month, day=now.day)
-        sunset = sun.get_sunset_time(at_date=now_naive, time_zone=tz)
-        sunset = sunset.replace(year=now.year, month=now.month, day=now.day)
-        self.logger.info(f"*** Sunrise: {sunrise}")
-        self.logger.info(f"*** Sunset: {sunset}")
-      if sched.time_based_on == 'sunrise':
-        startTime = sun.get_sunrise_time(at_date=now_naive, time_zone=tz).replace(second=0, microsecond=0)
-      elif sched.time_based_on == 'sunset':
-        startTime = sun.get_sunset_time(at_date=now_naive, time_zone=tz).replace(second=0, microsecond=0)
-       
-      startTime = startTime.replace(year=now.year, month=now.month, day=now.day) # Hack, because sunset returns the wrong day for some reason
-      startTime = startTime + timedelta(minutes=int(sched.offset_minutes))
-    
-    return startTime
-
-  def shouldScheduleRun(self, sched, check_date=None, check_season=None):
-    date_to_check = check_date if check_date else datetime.now()
-    todayStr = calendar.day_abbr[date_to_check.weekday()]
-    if len(sched.days) > 0 and todayStr not in sched.days:
-      return False
-    
-    # Check season
-    if len(sched.seasons) > 0:
-      if check_season:
-        season = check_season
-      else:
-        lat, lon = self.cfg.getLatLon()
-        season = self.getSeason(lat, date_to_check)
-      
-      if season not in sched.seasons:
-        return False
-    
+  def send(self, alert):
+    self.sent.append(alert)
     return True
 
-  def evalSched(self, sched, timezone, now):
-    """Evaluate if schedule should trigger at the given time"""
-    if not self.shouldScheduleRun(sched, check_date=now):
-      return False
 
-    startTime = self.calculateScheduleTime(sched, now)
+class Irrigate:
+  def __init__(self, configFilename, *, offline=False, clock=None, logger=None,
+               valve_factory=None, sensor_factory=None, waterflow_factory=None,
+               channel_factory=None, data_directory=None):
+    self.offline = offline
+    self.clock = clock or SystemClock()
+    self._async_log = None
+    self.logger = logger or self.getLogger(None if offline else Path(configFilename).parent / "log.txt")
+    self._temporary = tempfile.TemporaryDirectory(prefix="irrigate-offline-") if offline and data_directory is None else None
+    self._stop = threading.Event()
+    self._shutdown_lock = threading.Lock()
+    self._close_lock = threading.Lock()
+    self._close_thread = None
+    self._close_result = None
+    self._heartbeats = {}
+    self._state_lock = threading.RLock()
+    self._started = False
+    self._shutdown_done = False
+    self._shutdown_result = None
+    self._threads = []
+    self._intervalDict = {}
+    self._scheduled = {}
+    self._baseline_date = None
+    self._sensor_cursors = {}
+    self._mqtt_generation = 0
+    self._status = None
+    self._tempStatus = {}
+    self._lastAllClosed = None
+    self._fatal_error = None
+    self.terminated = False
+    self._mqtt_commands = queue.PriorityQueue(maxsize=128)
+    self._mqtt_sequence = 0
+    self._mqtt_stops = {}
+    self._mqtt_cancelled_through = {}
+    self._mqtt_lock = threading.Lock()
+    self.cfg = config.Config(
+      self.logger, configFilename,
+      valve_factory=valve_factory or self._valve_factory,
+      sensor_factory=sensor_factory or self._sensor_factory,
+      waterflow_factory=waterflow_factory or self._flow_factory,
+    )
+    if clock is None:
+      self.clock.timezone = pytz.timezone(self.cfg.timezone)
+    self.startTime = self.clock.now().replace(tzinfo=None)
+    self._start_mono = self.clock.monotonic()
+    self.valves, self.sensors, self.waterflow = self.cfg.valves, self.cfg.sensors, self.cfg.waterflow
+    from valve_metrics import MetricsStore
+    directory = (data_directory or (self._temporary.name if self._temporary else
+                                    Path(configFilename).parent / "data"))
+    self.metrics = MetricsStore(directory, self.logger, clock=self.clock)
+    if offline and channel_factory is None:
+      channel_factory = lambda logger, cfg: OfflineChannel()
+    self.alerts = AlertManager(self.logger, self.cfg, self, clock=self.clock, channel_factory=channel_factory)
+    if offline:
+      from alert_channels.millerbot import MillerBotChannel
+      if any(isinstance(channel, MillerBotChannel) for channel in self.alerts.channels):
+        raise ValueError("Offline composition cannot use a real HTTP alert channel")
+    self.mqtt = Mqtt(self)
+    self.controller = ValveController(
+      self.valves, self.cfg.valvesConcurrency, self.clock, self.logger,
+      self.alerts, self.waterflow, self.metrics, on_stop=self._cancel_pending_opens,
+      is_open_current=self._mqtt_open_current,
+    )
+    self.cfg.runtime_lock = self.controller.lock
+    self.q = self.controller.q
+    self.workers = []
+    self.timer = None
+    self.api_server = None
 
-    if startTime == now:
-      return True
+  def getLogger(self, path=None):
+    logger = logging.getLogger("Irrigate.%s" % id(self))
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    sinks = [handler]
+    if path is not None:
+      handler = CheckedFileHandler(path, mode="a", encoding="utf-8", delay=True)
+      handler.setFormatter(formatter)
+      sinks.append(handler)
+    self._async_log = AsyncLogHandler(sinks)
+    logger.addHandler(self._async_log)
+    return logger
 
-    return False
+  def _valve_factory(self, type, logger, cfg):
+    if self.offline:
+      return TestValve(logger, cfg, self.clock)
+    if type != "3wire":
+      raise ValueError("Unsupported production valve type: %s" % type)
+    return ThreeWireValve(logger, cfg, clock=self.clock)
 
-  def getSeason(self, lat, date=None):
-    """Get season for a given latitude and optional date (defaults to today)"""
-    if date is None:
-      month = datetime.today().month
-    else:
-      month = date.month if hasattr(date, 'month') else date
-    
-    season = None
-    if lat >= 0:
-      if 3 <= month <= 5:
-        season = "Spring"
-      elif 6 <= month <= 8:
-        season = "Summer"
-      elif 9 <= month <= 11:
-        season = "Fall"
-      elif month == 12 or month <= 2:
-        season = "Winter"
-    else:
-      if 3 <= month <= 5:
-        season = "Fall"
-      elif 6 <= month <= 8:
-        season = "Winter"
-      elif 9 <= month <= 11:
-        season = "Spring"
-      elif month == 12 or month <= 2:
-        season = "Summer"
+  def _sensor_factory(self, type, logger, cfg):
+    if self.offline:
+      return TestSensor(logger, cfg, self.clock)
+    if type != "openweathermap":
+      raise ValueError("Unsupported production sensor type: %s" % type)
+    return OpenWeatherMapSensor(logger, cfg, clock=self.clock)
 
-    return season
+  def _flow_factory(self, type, logger, cfg):
+    if self.offline:
+      return TestWaterflow(logger, cfg, self.clock)
+    if type != "mqtt":
+      raise ValueError("Unsupported production waterflow type: %s" % type)
+    return MqttWaterflow(logger, cfg, clock=self.clock)
 
-  def checkIrregularFlow(self, valve, total_seconds, total_liters):
-    """Check if flow rate is off baseline at end of valve cycle"""
-    # Need baseline data
-    if valve.baseline_lpm is None or valve.baseline_std_dev is None:
-      return
-    
-    if total_seconds <= 0:
-      return
-    
-    # Calculate actual flow rate
-    actual_lpm = (total_liters / total_seconds) * 60
-    
-    # Get threshold (default from config or per-valve override)
-    threshold = 2.0  # Default std deviations
-    if hasattr(self.cfg.cfg, 'alerts'):
-      if hasattr(self.cfg.cfg.alerts, 'irregular_flow_threshold'):
-        threshold = self.cfg.cfg.alerts.irregular_flow_threshold
-      
-      # Check for valve-specific override
-      if hasattr(self.cfg.cfg.alerts, 'valve_overrides'):
-        if hasattr(self.cfg.cfg.alerts.valve_overrides, valve.name):
-          valve_override = getattr(self.cfg.cfg.alerts.valve_overrides, valve.name)
-          if hasattr(valve_override, 'irregular_flow_threshold'):
-            threshold = valve_override.irregular_flow_threshold
-    
-    # Calculate acceptable range
-    lower_bound = valve.baseline_lpm - (valve.baseline_std_dev * threshold)
-    upper_bound = valve.baseline_lpm + (valve.baseline_std_dev * threshold)
-    
-    # Check if outside range
-    if actual_lpm < lower_bound or actual_lpm > upper_bound:
-      deviation_pct = ((actual_lpm - valve.baseline_lpm) / valve.baseline_lpm) * 100
-      direction = "above" if actual_lpm > valve.baseline_lpm else "below"
-      
-      self.alerts.alert(
-        AlertType.IRREGULAR_FLOW,
-        f"Valve '{valve.name}' flow rate {direction} baseline: {actual_lpm:.2f} L/min vs baseline {valve.baseline_lpm:.2f} L/min ({deviation_pct:+.1f}%)",
-        valve_name=valve.name,
-        data={
-          "actual_lpm": round(actual_lpm, 2),
-          "baseline_lpm": valve.baseline_lpm,
-          "baseline_std_dev": valve.baseline_std_dev,
-          "threshold_std_devs": threshold,
-          "deviation_percent": round(deviation_pct, 2),
-          "total_seconds": total_seconds,
-          "total_liters": round(total_liters, 2)
-        }
-      )
-
-  def calculateJobDuration(self, valve, sched):
-    """Calculate job duration with sensor factor if applicable"""
-    jobDuration = sched.duration
-    
-    if sched.enable_uv_adjustments and hasattr(valve, 'sensor') and valve.sensor:
-      try:
-        factor = valve.sensor.getFactor()
-        if factor != 1:
-          self.logger.debug(f"Job duration adjusted from {sched.duration} to {jobDuration * factor} (factor: {factor}).")
-          jobDuration *= factor
-        
-        self.clearTempStatus("SensorErr")
-        if self.alerts:
-          self.alerts.clear_alert_state(AlertType.SENSOR_ERROR, valve.sensor.name)
-          
-      except Exception as ex:
-        self.setTempStatus("SensorErr")
-        error_msg = format(ex)
-        self.logger.error("Error calculating sensor factor '%s': %s." % (valve.sensor.name, error_msg))
-        if self.alerts:
-          self.alerts.alert(
-            AlertType.SENSOR_ERROR,
-            f"Sensor '{valve.sensor.name}' error: {error_msg}",
-            data={"sensor_name": valve.sensor.name, "error": error_msg}
-          )
-    
-    return jobDuration
-
-  def valveThread(self):
-    self.logger.info("Valve handler thread '%s' started." % threading.current_thread().name)
-    while not self.terminated:
-      try:
-        irrigateJob = self.q.get(timeout=5)
-        self.logger.info("Thread '%s' picked up job for valve '%s'. Queue size: %s." % (threading.current_thread().name, irrigateJob.valve.name, self.q.qsize()))
-        if irrigateJob.valve.handled:
-          self.logger.warning("Valve '%s' already handled. Returning to queue in 1 minute." % (irrigateJob.valve.name))
-          time.sleep(61)
-          self.q.put(irrigateJob)
-        else:
-          valve = irrigateJob.valve
-          valve.handled = True
-          
-          # Link global waterflow sensor to this valve during operation
-          if self.waterflow and self.waterflow.started:
-            valve.waterflow = self.waterflow
-          
-          self.logger.info("Irrigation cycle start for valve '%s' for %s minutes." % (valve.name, irrigateJob.duration))
-          duration = timedelta(minutes = irrigateJob.duration)
-          valve.secondsLast = 0
-          valve.litersLast = 0
-          valve.secondsRemain = duration.seconds
-          valve.secondsDuration = duration.seconds  # Store original duration for progress calculation
-          initialOpen = valve.secondsDaily
-          sensorDisabled = False
-          openSince = None
-          startTime = datetime.now()
-          while startTime + duration > datetime.now():
-            # The following two if statements needs to be together and first to prevent
-            # the valve from opening if the sensor is disable.
-            if irrigateJob.sensor is not None and irrigateJob.sensor.started:
-              try:
-                holdSensorDisabled = irrigateJob.sensor.shouldDisable()
-                if holdSensorDisabled != sensorDisabled:
-                  sensorDisabled = holdSensorDisabled
-                  self.logger.info("Sensor disable set to '%s' for valve '%s'" % (sensorDisabled, valve.name))
-                self.clearTempStatus("SensorErr")
-                self.alerts.clear_alert_state(AlertType.SENSOR_ERROR, irrigateJob.sensor.name)
-              except Exception as ex:
-                self.setTempStatus("SensorErr")
-                error_msg = format(ex)
-                self.logger.error("Error probing sensor (shouldDisable) '%s': %s." % (irrigateJob.sensor.name, error_msg))
-                self.alerts.alert(
-                  AlertType.SENSOR_ERROR,
-                  f"Sensor '{irrigateJob.sensor.name}' error: {error_msg}",
-                  data={"sensor_name": irrigateJob.sensor.name, "error": error_msg}
-                )
-            
-            # Detect manual close during job - valve closed but we still have openSince
-            # Check this BEFORE trying to open to prevent re-opening after manual close
-            if not valve.is_open and openSince is not None and not sensorDisabled:
-              valve.secondsLast = (datetime.now() - openSince).seconds
-              valve.secondsDaily = initialOpen + valve.secondsLast
-              self.logger.info("Irrigation valve '%s' manually closed. Terminating job. Open time %s seconds." 
-                              % (valve.name, valve.secondsLast))
-              break
-            
-            if not valve.is_open and not sensorDisabled:
-              valve.is_open = True
-              openSince = datetime.now()
-              valve.open()
-              self.logger.info("Irrigation valve '%s' opened." % (valve.name))
-            elif valve.is_open and openSince is None:
-              # Valve already open (manually or previous job) - inherit it
-              openSince = datetime.now()
-              self.logger.info("Irrigation valve '%s' already open, job inheriting." % (valve.name))
-
-            if valve.is_open and sensorDisabled:
-              valve.is_open = False
-              valve.secondsLast = (datetime.now() - openSince).seconds
-              openSince = None
-              valve.secondsDaily = initialOpen + valve.secondsLast
-              initialOpen = valve.secondsDaily
-              valve.secondsLast = 0
-              valve.close()
-              self.logger.info("Irrigation valve '%s' closed due to sensor." % (valve.name))
-            
-            if valve.is_open:
-              if openSince is not None:
-                valve.secondsLast = (datetime.now() - openSince).seconds
-                valve.secondsDaily = initialOpen + valve.secondsLast
-            if not valve.enabled:
-              self.logger.info("Valve '%s' disabled. Terminating irrigation cycle." % (valve.name))
-              break
-            if self.terminated:
-              self.logger.warning("Program exiting. Terminating irrigation cycle for valve '%s'..." % (valve.name))
-              break
-
-            valve.secondsRemain = ((startTime + duration) - datetime.now()).seconds
-            self.logger.debug("Irrigation valve '%s' Last Open = %ss. Remaining = %ss. Daily Total = %ss." \
-              % (valve.name, valve.secondsLast, valve.secondsRemain, valve.secondsDaily))
-            time.sleep(1)
-            if valve.waterflow is not None and valve.waterflow.started and self.everyXMinutes(valve.name, 1, False):
-              _lastLiter_1m = valve.waterflow.lastLiter_1m()
-              valve.litersDaily = valve.litersDaily + _lastLiter_1m
-              valve.litersLast = valve.litersLast + _lastLiter_1m
-              
-              # Check for malfunction (no flow after 60 seconds)
-              if valve.is_open and valve.secondsLast >= 60 and valve.litersLast == 0:
-                self.alerts.alert(
-                  AlertType.MALFUNCTION_NO_FLOW,
-                  f"Valve '{valve.name}' open for {valve.secondsLast}s but no water flow detected",
-                  valve_name=valve.name,
-                  data={"seconds_open": valve.secondsLast, "liters_detected": valve.litersLast}
-                )
-
-          self.logger.info("Irrigation cycle ended for valve '%s'." % (valve.name))
-          if valve.is_open:
-            valve.secondsLast = (datetime.now() - openSince).seconds
-            valve.secondsDaily = initialOpen + valve.secondsLast
-          if valve.is_open:
-            valve.is_open = False
-            valve.close()
-            self.logger.info("Irrigation valve '%s' closed. Overall open time %s seconds." % (valve.name, valve.secondsDaily))
-          
-          # Check for irregular flow at cycle end
-          if valve.waterflow and valve.waterflow.started and valve.secondsLast > 0:
-            self.checkIrregularFlow(valve, valve.secondsLast, valve.litersLast)
-          
-          # Clear malfunction state for next run
-          self.alerts.clear_alert_state(AlertType.MALFUNCTION_NO_FLOW, valve.name)
-          
-          # Unlink waterflow sensor from valve
-          valve.waterflow = None
-          
-          valve.handled = False
-          self.telemetryValve(valve)
-        self.q.task_done()
-      except queue.Empty:
-        pass
-      except Exception as ex:
-        self.logger.error("Error in valve handler thread '%s': %s" % (threading.current_thread().name, format(ex)))
-        traceback.print_exc()
-        # Ensure valve is left in a safe (closed) state
+  def start(self, test=None, *, background=True):
+    if self._started:
+      return self.controller.ready
+    if test is True and not self.offline:
+      raise ValueError("Test execution requires explicit offline=True composition")
+    if not background and not self.offline:
+      raise ValueError("Step-driven execution is restricted to explicit offline composition")
+    if self.offline and any(not getattr(valve, "offline_safe", False) for valve in self.valves.values()):
+      raise ValueError("Offline composition requires explicitly injected safe valve drivers")
+    if self._async_log:
+      self._async_log.start()
+    self._started = True
+    ready = self.controller.reconcile_startup()
+    self.metrics.load()
+    self.controller.restore_daily()
+    self.controller.prepare_daily_export()
+    self.metrics.flush()
+    self._reload_baselines()
+    self._baseline_date = self.clock.now().date()
+    for sensor in self.sensors.values():
+      if sensor.enabled:
+        if self.offline and isinstance(sensor, OpenWeatherMapSensor):
+          self.logger.info("Offline mode does not start an HTTP weather worker")
+          continue
         try:
-          if irrigateJob and irrigateJob.valve:
-            if irrigateJob.valve.is_open:
-              irrigateJob.valve.is_open = False
-              irrigateJob.valve.close()
-              self.logger.info("Safety-closed valve '%s' after error." % irrigateJob.valve.name)
-            irrigateJob.valve.handled = False
-            irrigateJob.valve.waterflow = None
+          sensor.start()
         except Exception:
-          pass
-    self.logger.warning("Valve handler thread '%s' exited." % threading.current_thread().name)
+          self.logger.exception("Sensor '%s' startup failed", sensor.name)
+    if self.waterflow and self.waterflow.enabled:
+      if not (self.offline and isinstance(self.waterflow, MqttWaterflow)):
+        try:
+          self.waterflow.start()
+        except Exception:
+          self.logger.exception("Waterflow startup failed")
+    if self.cfg.mqttEnabled and not self.offline:
+      try:
+        self.mqtt.start()
+      except Exception:
+        self.logger.exception("MQTT unavailable; local safety control remains active")
+    self._status = "OK" if ready else "Terminating"
+    if background:
+      self.alerts.start()
+      self.metrics.start()
+      control = threading.Thread(target=self._control_loop, name="ValveControl", daemon=True)
+      self.timer = threading.Thread(target=self._maintenance_loop, name="Scheduler", daemon=True)
+      supervisor = threading.Thread(target=self._supervise, name="Supervisor", daemon=True)
+      self.workers = [control]
+      self._threads = [control, self.timer, supervisor]
+      self._heartbeats = {"control": self.clock.monotonic(), "maintenance": self.clock.monotonic()}
+      for thread in self._threads:
+        thread.start()
+    return ready
+
+  def _control_loop(self):
+    try:
+      while not self._stop.is_set():
+        self._drain_mqtt(stops_only=True)
+        self.controller.tick()
+        self._drain_mqtt()
+        self.controller.tick()
+        self._heartbeats["control"] = self.clock.monotonic()
+        self._stop.wait(0.1)
+    except Exception as error:
+      self.logger.exception("Safety control thread failed")
+      self._fail_safe("Safety control failed (%s)" % type(error).__name__)
+
+  def _maintenance_loop(self):
+    try:
+      while not self._stop.is_set():
+        self.maintenance_tick()
+        self._heartbeats["maintenance"] = self.clock.monotonic()
+        self._stop.wait(0.25)
+    except Exception as error:
+      self.logger.exception("Scheduler/monitoring thread failed")
+      self._fail_safe("Scheduler failed (%s)" % type(error).__name__)
+
+  def _supervise(self):
+    while not self._stop.wait(0.25):
+      if any(not thread.is_alive() for thread in self._threads[:2]):
+        self._fail_safe("A critical control thread exited unexpectedly")
+        return
+      if any(self.clock.monotonic() - value > 10 for value in self._heartbeats.values()):
+        self._fail_safe("A critical control thread stopped making progress")
+        return
+
+  def _close_bounded(self):
+    self.controller.request_shutdown()
+    with self._close_lock:
+      if self._close_thread is None:
+        def close():
+          try:
+            self._close_result = self.controller.shutdown()
+          except Exception:
+            self._close_result = False
+            self.logger.exception("Safety close sequence failed")
+        self._close_thread = threading.Thread(target=close, name="SafetyClose", daemon=True)
+        self._close_thread.start()
+      worker = self._close_thread
+    worker.join(max(2.0, len(self.valves) * 0.7 + 0.5))
+    if worker.is_alive():
+      self.logger.critical("Safety close timed out; physical valve state is unknown")
+      return False
+    return self._close_result is True
+
+  def _fail_safe(self, message):
+    self._fatal_error = message
+    self._stop.set()
+    self.terminated = True
+    self._status = "Terminating"
+    closed = self._close_bounded()
+    self.publishStatus()
+    self.alerts.alert(
+      AlertType.SAFETY_INTERVENTION, message,
+      data={"close_commands_acknowledged": closed, "physical_state": "unverified"},
+    )
+
+  def exit_gracefully(self, signum=None, frame=None):
+    self.controller.request_shutdown()
+    self._stop.set()
+    self.terminated = True
+
+  def shutdown(self, reason="shutdown"):
+    with self._shutdown_lock:
+      if self._shutdown_done:
+        return self._shutdown_result is True
+      self._stop.set()
+      self.terminated = True
+      self._status = "Terminating"
+      closed = self._close_bounded() if self._started else True
+      if self._started:
+        self.alerts.alert(
+          AlertType.SYSTEM_EXIT, reason,
+          data={"close_commands_acknowledged": closed, "physical_state": "unverified"},
+        )
+      if self.api_server is not None:
+        self.api_server.should_exit = True
+      for thread in self._threads:
+        if thread is not threading.current_thread():
+          thread.join(2)
+          if thread.is_alive():
+            self.logger.error("Thread '%s' did not stop within shutdown bound", thread.name)
+      self.mqtt.shutdown()
+      if self.waterflow:
+        self.waterflow.shutdown()
+      for sensor in self.sensors.values():
+        sensor.shutdown()
+      self.alerts.shutdown()
+      self.metrics.shutdown()
+      if self._temporary and not (self._close_thread and self._close_thread.is_alive()):
+        self._temporary.cleanup()
+      if self._async_log:
+        self._async_log.shutdown()
+      self._shutdown_result = closed
+      self._shutdown_done = True
+      return closed
+
+  def _cancel_pending_opens(self, name, sequence=None):
+    with self._mqtt_lock:
+      barrier = self._mqtt_sequence if sequence is None else sequence
+      self._mqtt_cancelled_through[name] = max(self._mqtt_cancelled_through.get(name, 0), barrier)
+
+  def _mqtt_open_current(self, name, sequence):
+    with self._mqtt_lock:
+      return sequence > self._mqtt_cancelled_through.get(name, 0)
+
+  def submit_mqtt(self, topic, payload):
+    if self._stop.is_set():
+      self.logger.error("MQTT command rejected during shutdown")
+      return
+    parts = topic.split("/")
+    with self._mqtt_lock:
+      self._mqtt_sequence += 1
+      sequence = self._mqtt_sequence
+      if len(parts) == 4 and parts[3] == "command" and parts[1] in ("forceopen", "forceclose"):
+        name = parts[2].replace("_", " ")
+        if name not in self.valves:
+          self.logger.error("MQTT command rejected for unknown valve")
+          return
+        if parts[1] == "forceclose":
+          self._mqtt_stops[name] = sequence
+          self._mqtt_cancelled_through[name] = sequence
+          return
+        if self.controller.operations.get(name) is not None and name not in self._mqtt_stops:
+          self.logger.error("MQTT Open rejected for owned valve '%s'; Close is required first", name)
+          return
+      try:
+        self._mqtt_commands.put_nowait((sequence, topic, payload))
+      except queue.Full:
+        self.logger.error("MQTT command backlog full; command rejected without actuation")
+
+  def _drain_mqtt(self, stops_only=False):
+    with self._mqtt_lock:
+      stops = list(self._mqtt_stops.items())
+    for name, sequence in stops:
+      topic = "%s/forceclose/%s/command" % (self.cfg.mqttClientName, name.replace(" ", "_"))
+      self.mqtt.processMessages(topic, b"", command_sequence=sequence)
+      with self._mqtt_lock:
+        if self._mqtt_stops.get(name) == sequence:
+          self._mqtt_stops.pop(name)
+    if stops_only:
+      return
+    with self._mqtt_lock:
+      try:
+        sequence, topic, payload = self._mqtt_commands.get_nowait()
+      except queue.Empty:
+        return
+      parts = topic.split("/")
+      if len(parts) == 4 and parts[1] == "forceopen" and parts[3] == "command":
+        name = parts[2].replace("_", " ")
+        if sequence <= self._mqtt_cancelled_through.get(name, 0):
+          self.logger.info("MQTT Open rejected for '%s': superseded by a later Close", name)
+          self._mqtt_commands.task_done()
+          return
+        if name in self._mqtt_stops:
+          self._mqtt_commands.put_nowait((sequence, topic, payload))
+          self._mqtt_commands.task_done()
+          return
+    try:
+      self.mqtt.processMessages(topic, payload, command_sequence=sequence)
+    finally:
+      self._mqtt_commands.task_done()
 
   def queueJob(self, job):
-    alive_workers = sum(1 for w in self.workers if w.is_alive())
-    qsize = self.q.qsize()
-    self.q.put(job)
-    if job.sched is not None:
-      self.logger.info(f"Valve '{job.valve.name}' job queued. Duration {job.duration} minutes. Queue size: {qsize + 1}. Worker threads alive: {alive_workers}/{len(self.workers)}.")
-    else:
-      self.logger.info(f"Valve '{job.valve.name}' adhoc job queued. Duration {job.duration} minutes. Queue size: {qsize + 1}. Worker threads alive: {alive_workers}/{len(self.workers)}.")
+    self.controller.enqueue(job)
+    self.logger.info("Queued '%s' for %s minutes", job.valve.name, job.duration)
+
+  def update_config(self, mutator, *, enabled_updates=None):
+    def publish():
+      self.controller.apply_runtime_enabled_updates(enabled_updates or {})
+    result = self.cfg.transaction(mutator, on_publish=publish)
+    self.alerts.reload_config()
+    self.controller.tick()
+    return result
+
+  def calculateScheduleTime(self, sched, now):
+    return schedule_time(sched, now, self.cfg.timezone, *self.cfg.getLatLon())
+
+  def shouldScheduleRun(self, sched, check_date=None, check_season=None):
+    return should_run(sched, check_date or self.clock.now(), self.cfg.latitude, check_season)
+
+  def evalSched(self, sched, timezone, now):
+    return self.shouldScheduleRun(sched, now) and self.calculateScheduleTime(sched, now) == now
+
+  def getSeason(self, lat, date=None):
+    date = date if date is not None else self.clock.now()
+    if not hasattr(date, "month"):
+      date = SimpleNamespace(month=date)
+    return season_for(lat, date)
+
+  def calculateJobDuration(self, valve, sched):
+    factor = None
+    sensor = getattr(valve, "sensor", None)
+    if getattr(sched, "enable_uv_adjustments", False) and sensor and sensor.enabled:
+      try:
+        factor = sensor.getFactor()
+      except Exception as error:
+        self.logger.warning("Using base duration for '%s'; weather adjustment unavailable (%s)",
+                            valve.name, type(error).__name__)
+    return adjusted_duration(sched, factor)
+
+  def _schedule_tick(self):
+    now = self.clock.now().astimezone(pytz.timezone(self.cfg.timezone)).replace(second=0, microsecond=0)
+    for name, valve in self.valves.items():
+      if not valve.enabled:
+        continue
+      for index, sched in enumerate(list(valve.schedules)):
+        if self.evalSched(sched, self.cfg.timezone, now):
+          key = (name, index, now.date(), now.hour, now.minute)
+          if key in self._scheduled:
+            continue
+          self._scheduled[key] = True
+          try:
+            duration = self.calculateJobDuration(valve, sched)
+            if duration > 0 and self.controller.ready:
+              self.queueJob(Job(valve, duration, sched))
+          except (ControlError, ValueError) as error:
+            self.logger.error("Scheduled job %s for '%s' rejected: %s", index, name, error)
+            self.alerts.alert(
+              AlertType.SAFETY_INTERVENTION,
+              "Scheduled job for '%s' rejected before actuation: %s" % (name, error),
+              valve_name=name, data={"schedule_index": index, "error": type(error).__name__},
+            )
+    self._scheduled = {key: value for key, value in self._scheduled.items() if key[2] >= now.date()}
 
   def everyXMinutes(self, key, interval, bootstrap):
-    if not key in self._intervalDict.keys():
-      self._intervalDict[key] = datetime.now()
+    now = self.clock.monotonic()
+    if key not in self._intervalDict:
+      self._intervalDict[key] = now
       return bootstrap
-
-    if datetime.now() >= self._intervalDict[key] + timedelta(minutes=interval):
-      self._intervalDict[key] = datetime.now()
+    if now - self._intervalDict[key] >= interval * 60:
+      self._intervalDict[key] = now
       return True
-
     return False
 
-  def timerThread(self):
-    try:
-      while True:
-        tz = pytz.timezone(self.cfg.timezone)
-        now = tz.localize(datetime.now().replace(second=0, microsecond=0))
+  def _reload_baselines(self):
+    detached = {name: SimpleNamespace(
+      name=name, baseline_lpm=None, baseline_trend=None,
+      baseline_std_dev=None, baseline_sample_count=0,
+    ) for name in self.valves}
+    self.metrics.load_baselines(detached)
+    with self.controller.lock:
+      for name, values in detached.items():
+        for field in ("baseline_lpm", "baseline_trend", "baseline_std_dev", "baseline_sample_count"):
+          setattr(self.valves[name], field, getattr(values, field))
 
-        if now.hour == 0 and now.minute == 0:
-          # Write yesterday's daily summaries before resetting
-          yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-          write_daily_summaries(self.valves, yesterday, self.logger)
-          
-          # Reset daily counters
-          for aValve in self.valves.values():
-            aValve.secondsDaily = 0
-            aValve.litersDaily = 0
-          
-          # Reload baselines with updated data
-          load_baselines(self.valves, self.logger)
+  def maintenance_tick(self):
+    self._monitor_health()
+    date = self.clock.now().date()
+    if date != self._baseline_date and self.everyXMinutes("baseline_refresh", 1, True):
+      integrated_date = self.controller.prepare_daily_export()
+      if integrated_date == date:
+        self.metrics.flush()
+        if not self.metrics.get_health().get("persistence_error"):
+          self._reload_baselines()
+          self._baseline_date = date
+    if self.everyXMinutes("scheduler", 1, True):
+      self._schedule_tick()
+    events, finished = self.controller.drain_events()
+    for snapshot in events:
+      self.telemetryValve(snapshot)
+    for operation in finished:
+      if operation.complete:
+        self.checkIrregularFlow(operation.valve, operation.open_seconds, operation.liters)
+    if self.cfg.telemetry and self.everyXMinutes("idleInterval", self.cfg.telemIdleInterval, False):
+      self.mqtt.publish("/svc/uptime", int((self.clock.monotonic() - self._start_mono) / 60))
+      for valve in self.valves.values():
+        self.telemetryValve(valve)
+      self.publishStatus()
+      for name, sensor in self.sensors.items():
+        self.telemetrySensor(name, sensor)
+    if self.cfg.telemetry and self.everyXMinutes("activeInterval", self.cfg.telemActiveInterval, False):
+      for valve in self.valves.values():
+        if valve.handled:
+          self.telemetryValve(valve)
+    if self.everyXMinutes("checkLeakInterval", 1, False):
+      self._check_leak()
 
-        if self.cfg.telemetry and self.everyXMinutes("idleInterval", self.cfg.telemIdleInterval, False):
-          delta = (datetime.now() - self.startTime)
-          uptime = ((delta.days * 86400) + delta.seconds) // 60
-          self.mqtt.publish("/svc/uptime", uptime)
-          
-          for valve in self.valves.values():
-            self.telemetryValve(valve)
-          self.publishStatus()
+  def _monitor_health(self):
+    lost = False
+    resources = [("sensor", sensor.name, sensor.get_health()) for sensor in self.sensors.values()]
+    if self.waterflow:
+      resources.append(("resource", "waterflow", self.waterflow.get_health()))
+    if self.cfg.mqttEnabled and not self.offline:
+      resources.append(("resource", "mqtt", {"enabled": True, "available": self.mqtt.mqttStarted,
+                                  "reason": "MQTT disconnected"}))
+    if self._async_log:
+      resources.append(("resource", "logging", self._async_log.get_health()))
+    accounting = self.metrics.get_health()
+    error = self.controller.accounting_error or accounting.get("persistence_error")
+    if error:
+      resources.append(("resource", "accounting", {"enabled": True, "available": False, "reason": error}))
+    else:
+      self.alerts.clear_alert_state(AlertType.MONITORING_UNAVAILABLE, subject="resource:accounting")
+    for category, subject, health in resources:
+      incident_subject = category + ":" + subject
+      if health["enabled"] and not health["available"]:
+        lost = True
+        if category == "sensor":
+          self.alerts.alert(
+            AlertType.SENSOR_ERROR, "Sensor '%s' error: %s" % (subject, health.get("reason")),
+            subject=subject, data={"sensor_name": subject, "error": health.get("reason")},
+          )
+        self.alerts.alert(
+          AlertType.MONITORING_UNAVAILABLE, "Monitoring unavailable: %s (%s)" % (subject, health.get("reason")),
+          subject=incident_subject, data={"source": subject, "reason": health.get("reason")},
+        )
+      else:
+        self.alerts.clear_alert_state(AlertType.MONITORING_UNAVAILABLE, subject=incident_subject)
+        if category == "sensor":
+          self.alerts.clear_alert_state(AlertType.SENSOR_ERROR, subject=subject)
+    with self._state_lock:
+      if lost:
+        self._tempStatus["SensorErr"] = True
+      else:
+        self._tempStatus.pop("SensorErr", None)
+      if self.controller.ready and not self._stop.is_set():
+        self._status = "OK"
 
-          for sensor in self.sensors.keys():
-            self.telemetrySensor(sensor, self.sensors[sensor])
+  def allValvesClosed(self):
+    with self.controller.lock:
+      since = self.controller.closed_since
+      return since is not None and self.clock.monotonic() - since >= 60
 
-        if self.cfg.telemetry and self.everyXMinutes("activeInterval", self.cfg.telemActiveInterval, False):
-          for valve in self.valves.values():
-            if valve.handled:
-              self.telemetryValve(valve)
+  def _check_leak(self):
+    flow = self.waterflow
+    if not flow or not flow.enabled or not flow.leakdetection or not self.allValvesClosed():
+      return
+    if self.alerts.is_in_exclusion_window(self.clock.now()):
+      self.alerts.clear_alert_state(AlertType.LEAK)
+      self.clearTempStatus("Leaking")
+      return
+    sample = flow.snapshot()
+    if not sample["available"]:
+      return
+    rate = sample["value"]
+    if rate > 0:
+      self.alerts.alert(
+        AlertType.LEAK, "Leak detected: %.2f L/min flow with all valves closed" % rate,
+        data={"flow_rate_lpm": rate},
+      )
+      self.setTempStatus("Leaking")
+    else:
+      self.alerts.clear_alert_state(AlertType.LEAK)
+      self.clearTempStatus("Leaking")
 
-        if self.everyXMinutes("checkLeakInterval", 1, False):
-          if self.waterflow is not None and self.waterflow.started and self.waterflow.leakdetection:
-            all_closed = self.allValvesClosed()
-            # Check for leak (unless in exclusion window)
-            if all_closed:
-              tz = pytz.timezone(self.cfg.timezone)
-              now_tz = tz.localize(datetime.now())
-              
-              if not self.alerts.is_in_exclusion_window(now_tz):
-                flow_rate = self.waterflow.lastLiter_1m()
-                if flow_rate > 0:
-                  self.alerts.alert(
-                    AlertType.LEAK,
-                    f"Leak detected: {flow_rate:.2f} L/min flow with all valves closed",
-                    data={"flow_rate_lpm": flow_rate}
-                  )
-                  self.setTempStatus("Leaking")
-                else:
-                  # Leak resolved
-                  self.alerts.clear_alert_state(AlertType.LEAK)
-                  self.clearTempStatus("Leaking")
-              else:
-                # In exclusion window - clear any existing leak state
-                self.alerts.clear_alert_state(AlertType.LEAK)
-                self.clearTempStatus("Leaking")
+  def checkIrregularFlow(self, valve, total_seconds, total_liters):
+    baseline, std = valve.baseline_lpm, valve.baseline_std_dev
+    if baseline is None or std is None or total_seconds <= 0:
+      return
+    if not math.isfinite(baseline) or baseline <= 0 or not math.isfinite(std) or std < 0:
+      self.logger.warning("Cannot compare flow against invalid/zero baseline for '%s'", valve.name)
+      return
+    threshold = self.cfg.cfg.alerts.irregular_flow_threshold
+    overrides = getattr(self.cfg.cfg.alerts, "valve_overrides", None)
+    if overrides and hasattr(overrides, valve.name):
+      threshold = getattr(getattr(overrides, valve.name), "irregular_flow_threshold", threshold)
+    actual = total_liters / total_seconds * 60
+    if (baseline - std * threshold <= actual <= baseline + std * threshold
+        or math.isclose(actual, baseline, rel_tol=1e-9, abs_tol=1e-9)):
+      self.alerts.clear_alert_state(AlertType.IRREGULAR_FLOW, valve.name)
+      return
+    deviation = (actual - baseline) / baseline * 100
+    direction = "above" if actual > baseline else "below"
+    self.alerts.alert(
+      AlertType.IRREGULAR_FLOW,
+      "Valve '%s' flow rate %s baseline: %.2f L/min vs baseline %.2f L/min (%+.1f%%)" %
+      (valve.name, direction, actual, baseline, deviation),
+      valve_name=valve.name, data={
+        "actual_lpm": round(actual, 2), "baseline_lpm": baseline,
+        "baseline_std_dev": std, "threshold_std_devs": threshold,
+        "deviation_percent": round(deviation, 2), "total_seconds": int(total_seconds + 1e-6),
+        "total_liters": round(total_liters, 2),
+      },
+    )
 
-        if self.everyXMinutes("scheduler", 1, True):
-          # Must not evaluate more or less than once every minute otherwise running jobs will get queued again
-          for aValve in self.valves.values():
-            if aValve.enabled:
-              if aValve.schedules is not None:
-                for valveSched in aValve.schedules:
-                  if self.evalSched(valveSched, self.cfg.timezone, now):
-                    jobDuration = self.calculateJobDuration(aValve, valveSched)
-                    job = model.Job(valve = aValve, duration = jobDuration, sched = valveSched)
-                    self.queueJob(job)
-
-        time.sleep(1)
-    except Exception as ex:
-      traceback.print_exc(ex)
-      self.setStatus("Terminating")
-      self.logger.error("Timer thread exited with error '%s'. Terminating Irrigate!" % format(ex))
-      self.terminated = True
-  
-  def setTempStatus(self, tempStatus):
-    self._tempStatus[tempStatus] = True
+  def setTempStatus(self, status):
+    with self._state_lock:
+      self._tempStatus[status] = True
     self.publishStatus()
 
-  def clearTempStatus(self, tempStatus):
-    if tempStatus in self._tempStatus:
-      del self._tempStatus[tempStatus]
+  def clearTempStatus(self, status):
+    with self._state_lock:
+      self._tempStatus.pop(status, None)
     self.publishStatus()
 
   def setStatus(self, status):
@@ -622,74 +591,121 @@ class Irrigate:
     self.publishStatus()
 
   def publishStatus(self):
-    if len(self._tempStatus.keys()) > 0:
-      self.mqtt.publish("/svc/status", ",".join(self._tempStatus.keys()))
-    else:
-      self.mqtt.publish("/svc/status", self._status)
-
-  def allValvesClosed(self):
-    for valve in self.valves.values():
-      if valve.is_open:
-        self._lastAllClosed = None
-        return False
-
-    # The waterflow sensor may still report some flow after the valve is closed (depends on the sensor
-    # report interval, typically 10 seconds). So AllValvesClosed will report True only 60 seconds
-    # after all valves have been closed.
-    if self._lastAllClosed is None:
-      self._lastAllClosed = datetime.now()
-
-    return datetime.now() >= self._lastAllClosed + timedelta(0, 60)
+    with self._state_lock:
+      status = ",".join(self._tempStatus) if self._tempStatus else self._status
+    self.mqtt.publish("/svc/status", status)
 
   def telemetryValve(self, valve):
-    statusStr = "enabled"
-    if not valve.enabled:
-      statusStr = "disabled"
-    elif valve.is_open:
-      statusStr = "open"
+    if isinstance(valve, dict):
+      values = valve
+    else:
+      values = self.controller.valve_snapshot(valve.name)
+    name = values["name"]
+    status = "open" if values["is_open"] else "enabled" if values["enabled"] else "disabled"
+    operation = self.controller.operations.get(name)
+    if self.controller.faults.get(name) or (values["is_open"] and operation and operation.no_flow):
+      status = "malfunction"
+    self.mqtt.publish(name + "/secondsLast", values["seconds_last"])
+    if self.waterflow and self.waterflow.started:
+      self.mqtt.publish(name + "/litersLast", values["liters_last"])
+    self.mqtt.publish(name + "/status", status)
+    self.mqtt.publish(name + "/dailytotal", values["seconds_daily"])
+    if self.waterflow and self.waterflow.started:
+      self.mqtt.publish(name + "/dailyliters", values["liters_daily"])
+    self.mqtt.publish(name + "/remaining", values["seconds_remain"])
 
-    if valve.is_open:
-      self.mqtt.publish(valve.name+"/secondsLast", valve.secondsLast)
-      if valve.waterflow is not None and valve.waterflow.started:
-        self.mqtt.publish(valve.name+"/litersLast", valve.litersLast)
-        if valve.secondsLast > 60 and valve.litersLast == 0:
-          statusStr = "malfunction"
-
-    self.mqtt.publish(valve.name+"/status", statusStr)
-    self.mqtt.publish(valve.name+"/dailytotal", valve.secondsDaily)
-    if valve.waterflow is not None and valve.waterflow.started:
-      self.mqtt.publish(valve.name+"/dailyliters", valve.litersDaily)
-    self.mqtt.publish(valve.name+"/remaining", valve.secondsRemain)
+  def reset_telemetry_cursor(self):
+    with self._state_lock:
+      self._sensor_cursors = {}
+      self._mqtt_generation += 1
 
   def telemetrySensor(self, name, sensor):
     prefix = "sensor/" + name + "/"
-    statusStr = "Enabled"
+    with self._state_lock:
+      generation = self._mqtt_generation
     try:
-      if sensor.shouldDisable():
-        statusStr = "Disabled"
-      elif sensor.getFactor() != 1:
-        statusStr = "Factored"
-      self.mqtt.publish(prefix + "factor", sensor.getFactor())
-      telem = sensor.getTelemetry()
-      if telem is not None:
-        for t in telem.keys():
-          self.mqtt.publish(prefix + t, telem[t])
-    except Exception as ex:
-      statusStr = "Error"
-    self.mqtt.publish(prefix + "status", statusStr)
+      factor = sensor.getFactor()
+      disabled = sensor.shouldDisable()
+      status = "Disabled" if disabled else "Factored" if factor != 1 else "Enabled"
+      self.mqtt.publish(prefix + "factor", factor)
+      revision = getattr(sensor, "revision", None)
+      if revision is None or self._sensor_cursors.get(name) != revision:
+        telemetry = sensor.getTelemetry()
+        sent = [self.mqtt.publish(prefix + key, value) for key, value in telemetry.items()]
+        if all(sent):
+          with self._state_lock:
+            if generation == self._mqtt_generation:
+              self._sensor_cursors[name] = revision
+    except Exception:
+      status = "Error"
+    self.mqtt.publish(prefix + "status", status)
 
-  def getLogger(self):
-    formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',
-                                  datefmt='%Y-%m-%d %H:%M:%S')
-    handler = logging.FileHandler('log.txt', mode='w')
-    handler.setFormatter(formatter)
-    screen_handler = logging.StreamHandler(stream=sys.stdout)
-    screen_handler.setFormatter(formatter)
-    logger = logging.getLogger("MyLogger")
-    logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
-    logger.addHandler(screen_handler)
-    return logger
+  def get_health(self):
+    health = self.controller.get_health()
+    if self._fatal_error:
+      health["controller"]["last_error"] = self._fatal_error
+      health["controller"]["fault"] = True
+    health["controller"]["heartbeat_age_seconds"] = {
+      name: max(0.0, self.clock.monotonic() - stamp) for name, stamp in self._heartbeats.items()
+    }
+    if self._started and self._threads:
+      running = all(thread.is_alive() for thread in self._threads[:2])
+      health["controller"]["running"] = running
+      health["ready"] = health["ready"] and running
+    health["monitoring"] = {
+      "mqtt": {"enabled": self.cfg.mqttEnabled, "connected": self.mqtt.mqttStarted},
+      "waterflow": self.waterflow.get_health() if self.waterflow else {
+        "enabled": False, "available": False, "fresh": False, "age_seconds": None, "reason": "not configured",
+      },
+      "sensors": [sensor.get_health() for sensor in self.sensors.values()],
+    }
+    health["alerts"] = self.alerts.get_health()
+    health["accounting"] = self.metrics.get_health()
+    if self.controller.accounting_error:
+      health["accounting"]["persistence_error"] = self.controller.accounting_error
+    health["offline_mode"] = self.offline
+    if self._async_log:
+      health["logging"] = self._async_log.get_health()
+    return health
 
-if __name__ == '__main__':
-    sys.exit(main(sys.argv))
+
+def main(argv=None):
+  parser = argparse.ArgumentParser(description="Irrigation controller")
+  parser.add_argument("--config", default="config.json")
+  parser.add_argument("--test", action="store_true", help="Offline initialization check; no GPIO/network/server")
+  parser.add_argument("--simulate", nargs="?", const="", default=None)
+  args = parser.parse_args((argv or sys.argv)[1:])
+  offline = args.test or args.simulate is not None
+  app = Irrigate(args.config, offline=offline)
+  if args.simulate is not None:
+    from schedule_simulator import ScheduleSimulator
+    simulator = ScheduleSimulator(app)
+    simulator.parse_schedule_options(args.simulate)
+    simulator.print_schedule()
+    app.shutdown()
+    return 0
+  if args.test:
+    app.logger.info("Offline initialization check: no GPIO, network, or API server")
+    try:
+      return 0 if app.start(background=False) else 1
+    finally:
+      app.shutdown("offline test complete")
+  for sig in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, app.exit_gracefully)
+  from api_server import run_api_server
+  try:
+    app.start(test=False)
+    if app._stop.is_set():
+      return 0
+    api_thread = threading.Thread(target=run_api_server, args=(app,), name="API", daemon=True)
+    api_thread.start()
+    while not app._stop.wait(0.25):
+      if not api_thread.is_alive():
+        app._fail_safe("API server exited unexpectedly")
+    return 1 if app._fatal_error else 0
+  finally:
+    app.shutdown("system shutdown")
+
+
+if __name__ == "__main__":
+  sys.exit(main())

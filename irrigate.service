@@ -3,7 +3,8 @@ Description=Irrigate
 After=multi-user.target
 
 [Service]
-KillSignal=SIGINT
+KillSignal=SIGTERM
+TimeoutStopSec=30
 Type=idle
 WorkingDirectory=/home/pi/Irrigate/
 ExecStart=/usr/bin/python3 /home/pi/Irrigate/irrigate.py

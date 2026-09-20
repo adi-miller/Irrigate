@@ -1,52 +1,47 @@
-from test_base import init
-from test_base import setStartTimeToNow
-from datetime import datetime
+from test_base import runtime
 
-def test_sh_waterflowException():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, 'Test1', deltaInMinutes=10)
-  setStartTimeToNow(cfg, 'Test2', deltaInMinutes=10)
-  irrigate.waterflow.exception = True
-  irrigate.start()
-  assert not irrigate.waterflow.started
 
-def test_sh_waterflowLeakDetection():
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  setStartTimeToNow(cfg, 'Test1', deltaInMinutes=10)
-  setStartTimeToNow(cfg, 'Test1', deltaInMinutes=10)
-  irrigate.waterflow.exception = True
-  irrigate.start()
-  assert not irrigate.waterflow.started
+def test_leak_is_not_resolved_by_stale_or_disconnected_flow(runtime):
+  flow = runtime.waterflow
+  runtime.clock.advance(60)
+  flow.setLastLiter_1m(2)
+  runtime._check_leak()
+  assert "Leaking" in runtime._tempStatus
+  runtime.clock.advance(61)
+  runtime._check_leak()
+  assert "Leaking" in runtime._tempStatus
+  assert flow.lastLiter_1m() == 2
+  flow.connected = False
+  flow.setLastLiter_1m(0)
+  runtime._check_leak()
+  assert "Leaking" in runtime._tempStatus
+  flow.connected = True
+  runtime._check_leak()
+  assert "Leaking" not in runtime._tempStatus
 
-def test_waterflow_history_structure():
-  """Test that waterflow history contains timestamp and value tuples"""
-  irrigate, logger, cfg, valves, q = init("test_config.json")
-  
-  # Get the history
-  history = irrigate.waterflow.getHistory()
-  
-  # Should have 120 entries
-  assert len(history) == 120
-  
-  # Each entry should be a dict with timestamp and value
-  for entry in history:
-    assert isinstance(entry, dict)
-    assert "timestamp" in entry
-    assert "value" in entry
-    assert isinstance(entry["value"], (int, float))
-    # Timestamp should be parseable as ISO format
-    timestamp = datetime.fromisoformat(entry["timestamp"])
-    assert isinstance(timestamp, datetime)
-  
-  # Add a value and check it's added correctly
-  irrigate.waterflow.setLastLiter_1m(5.5)
-  import time
-  time.sleep(61)  # Wait for more than 60 seconds
-  irrigate.waterflow.setLastLiter_1m(6.5)
-  
-  history = irrigate.waterflow.getHistory()
-  # Should still be 120 (deque maxlen)
-  assert len(history) == 120
-  # Last entry should be our new value
+
+def test_leak_exclusion_and_open_valve_intent(runtime):
+  from types import SimpleNamespace
+  runtime.clock.advance(60)
+  runtime.waterflow.setLastLiter_1m(2)
+  runtime.alerts.leak_detection_exclusions = [
+    SimpleNamespace(time_based_on="fixed", fixed_start_time="10:00", duration=55, days=[], seasons=[]),
+  ]
+  runtime._check_leak()
+  assert "Leaking" not in runtime._tempStatus
+  runtime.alerts.leak_detection_exclusions = []
+  runtime.controller.start_manual("Valve A", 2)
+  runtime._check_leak()
+  assert "Leaking" not in runtime._tempStatus
+
+
+def test_flow_history_is_finite_observed_and_nonmutating(runtime):
+  flow = runtime.waterflow
+  assert flow.getHistory() == []
+  flow.setLastLiter_1m(5.5)
+  runtime.clock.advance(61)
+  flow.setLastLiter_1m(6.5)
+  history = flow.getHistory()
+  assert len(history) == 2
   assert history[-1]["value"] == 6.5
-
+  assert flow.getHistory() == history

@@ -1,8 +1,7 @@
 suntime
 pytz
-paho-mqtt
+paho-mqtt>=2,<3
 requests
-RPi.GPIO
 fastapi
 uvicorn[standard]
 jsonschema

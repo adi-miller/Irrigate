@@ -1,3 +1,17 @@
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+.pytest_cache/
+config.json
+*.last-good
+data/
+log.txt
+xRPi/
+runtime_state.json
+runtime_state.json.bak
+runtime_state.json.pending-*
+runtime_state.json.bak.pending-*
+runtime_state.json.corrupt-*
+runtime_state.json.bak.corrupt-*
+valve_metrics.csv.pending-*

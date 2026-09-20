@@ -1,0 +1,70 @@
+{
+  "status": {
+    "system": {
+      "status": "OK",
+      "current_time": "2026-09-18T12:00:00+00:00"
+    },
+    "valves": [
+      {
+        "name": "North",
+        "enabled": false,
+        "is_open": true,
+        "handled": true,
+        "seconds_daily": 0,
+        "liters_daily": 0.0,
+        "seconds_remain": 300,
+        "seconds_duration": 300,
+        "seconds_last": 0,
+        "liters_last": 0.0
+      }
+    ],
+    "sensors": [],
+    "waterflow": {
+      "enabled": false,
+      "type": "mqtt",
+      "flow_rate_lpm": 0,
+      "is_active": false,
+      "leak_detection_enabled": true,
+      "last_update": null,
+      "history": []
+    }
+  },
+  "health": {
+    "ready": true,
+    "controller": {
+      "running": true,
+      "fault": false,
+      "last_error": null
+    },
+    "valves": [
+      {
+        "name": "North",
+        "state": "open",
+        "operation": "manual",
+        "fault": null,
+        "possibly_open": true,
+        "physical_state": "unverified",
+        "flow_alarm": false,
+        "attribution": {
+          "complete": true,
+          "reason": null,
+          "method": "single-commanded-valve shared-meter estimate"
+        }
+      }
+    ],
+    "monitoring": {
+      "mqtt": {
+        "enabled": false,
+        "connected": false
+      },
+      "waterflow": {
+        "available": false,
+        "fresh": false,
+        "age_seconds": null,
+        "reason": "disabled",
+        "enabled": false
+      },
+      "sensors": []
+    }
+  }
+}
