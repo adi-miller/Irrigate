@@ -196,7 +196,7 @@ def test_opening_from_idle_has_only_sixty_seconds_for_a_real_report(heartbeat_ap
 
 
 @pytest.mark.parametrize("rate", [0, 6])
-def test_active_reports_replace_opening_grace_with_strict_freshness(heartbeat_app, caplog, rate):
+def test_active_reports_keep_strict_health_but_defer_stale_notifications(heartbeat_app, caplog, rate):
   app = heartbeat_app
   app.waterflow.setLastLiter_1m(0)
   app.clock.advance(300)
@@ -215,8 +215,15 @@ def test_active_reports_replace_opening_grace_with_strict_freshness(heartbeat_ap
   app._monitor_health()
   assert not app.controller.get_waterflow_health()["source"]["available"]
   assert not app.waterflow.snapshot()["fresh"]
-  assert len(flow_warnings(caplog)) == 1
+  assert flow_warnings(caplog) == []
   assert operation.deadline == deadline
+  app.controller.stop("Valve A")
+  app.clock.advance(599.999)
+  app._monitor_health()
+  assert flow_warnings(caplog) == []
+  app.clock.advance(0.001)
+  app._monitor_health()
+  assert len(flow_warnings(caplog)) == 1
 
 
 def test_positive_flow_after_close_never_gains_idle_or_opening_grace(heartbeat_app, caplog):
@@ -233,6 +240,13 @@ def test_positive_flow_after_close_never_gains_idle_or_opening_grace(heartbeat_a
   app.controller.start_manual("Valve A", 5)
   app._monitor_health()
   assert not app.controller.get_waterflow_health()["source"]["available"]
+  assert flow_warnings(caplog) == []
+  app.controller.stop("Valve A")
+  app.clock.advance(599.999)
+  app._monitor_health()
+  assert flow_warnings(caplog) == []
+  app.clock.advance(0.001)
+  app._monitor_health()
   assert len(flow_warnings(caplog)) == 1
 
 

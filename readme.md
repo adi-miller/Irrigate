@@ -191,9 +191,9 @@ zero flow every **600 seconds while idle**, but reports much faster while wateri
 When every valve is acknowledged closed (including sensor-paused or queued
 operations), no actuator state is uncertain, and the latest valid reading is
 zero, monitoring allows **600 seconds plus 60 seconds of heartbeat jitter grace**.
-After that 660-second bound it raises one `monitoring_unavailable` incident until
-a real valid heartbeat recovers it. Positive flow with closed valves and
-unknown/faulted/possibly-open states retain the 60-second bound. Disconnection
+After that 660-second bound source health becomes unavailable. Positive flow
+with closed valves and unknown/faulted/possibly-open states retain the
+60-second source-health bound. Disconnection
 or invalid readings make source health unavailable immediately; neither renews
 the heartbeat nor clears an invalid-reading error without a valid observation.
 
@@ -205,6 +205,31 @@ An opening grace is consumed once per valid observation (or initial startup
 wait), not renewed by polling, reconnects, repeated Close/Open, or sensor
 pause/resume. Closing without an intervening observation does not erase that
 pending active-report deadline. No grace extends a watering deadline.
+
+**Stale/no-reading notifications have a separate, uniform window.** An enabled
+meter's `monitoring_unavailable` warning for missing data is eligible only when
+**more than 660 seconds** have elapsed since its last genuine valid observation:
+the nominal 10-minute heartbeat interval plus the existing 1-minute delivery
+margin. At exactly 60, 600 or 660 seconds there is no stale-data notification;
+the first monitoring tick after 660 seconds may enqueue one. This applies to
+zero and positive last readings, including the positive tail after physical
+watering stops, and to idle, active, paused or uncertain actuator states. Before
+any valid observation, the same notification window uses the runtime's single
+monotonic initialization time, even if startup valve reconciliation fails.
+Polling, reconnects and valve commands cannot renew it. The source-health
+opening grace neither extends this notification window nor makes old data fresh.
+
+There is **one non-repeating missing-reading incident per outage**, using the
+existing waterflow alert subject. A new valid observation rearms it, even if that
+observation arrives and expires between monitoring ticks. Invalid payloads,
+reason changes, reconnects, pauses, Close/Open and schedule completion do not
+recover a missing-reading incident. Disabled/unconfigured meters create no new
+warnings; disabling/re-enabling a meter is not sample recovery and does not
+erase an already queued incident or its bounded delivery retries. Disconnection
+and invalid-reading warnings remain immediate, and deferring a stale warning
+does not clear an existing failure or mark monitoring healthy. The notification
+uses `stale reading` or `no valid reading`; state-specific source-health reasons
+remain available independently through health.
 
 For an enabled meter, `/api/health` adds
 `monitoring.waterflow.source.available` and `.reason` for this liveness policy.
@@ -240,9 +265,11 @@ off the valve deadline thread with bounded queues and visible failure/overflow
 state. MillerBot retains the original request body (`user_id`, `query`, `role`),
 headers and message envelope. Attempts/delivery failures are tracked per channel;
 failed sends are not recorded as delivered. Retries are bounded, and recovery
-cancels obsolete pending retries. The outbox is memory-only: process/power failure
-can lose undelivered messages. HTTP acceptance by MillerBot does not independently
-confirm downstream Telegram delivery.
+cancels obsolete pending retries. These delivery retries are not periodic outage
+reminders. Incident deduplication and the outbox are memory-only: process/power
+failure can lose undelivered messages, and a later process may warn again for an
+unresolved outage. HTTP acceptance by MillerBot does not independently confirm
+downstream Telegram delivery.
 
 ## Accounting and simulation
 
