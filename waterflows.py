@@ -24,6 +24,7 @@ class BaseWaterflow:
     self._lastLiter_1m = 0.0
     self._lastupdate = None
     self._received = None
+    self._reading_revision = 0
     self._invalid_reading = False
     self._opening_deadline = None
     self._history_received = None
@@ -91,6 +92,7 @@ class BaseWaterflow:
       self._lastLiter_1m = value
       self._lastupdate = timestamp
       self._received = now
+      self._reading_revision += 1
       self._invalid_reading = False
       self._opening_deadline = None
       self._samples.append((now, value))
@@ -140,6 +142,22 @@ class BaseWaterflow:
       if self.enabled:
         health["source"] = source
       return health
+
+  def get_notification_state(self, *, startup_since):
+    """Pure warning eligibility, not measurement validity or source liveness."""
+    with self._lock:
+      health = self.get_health()
+      reason = health.get("source", health)["reason"]
+      if reason in ("stale reading", "no valid reading"):
+        age = health["age_seconds"]
+        if age is None:
+          age = max(0.0, self.clock.monotonic() - startup_since)
+        if age <= self.IDLE_HEARTBEAT_SECONDS + self.IDLE_HEARTBEAT_GRACE_SECONDS:
+          reason = None
+      return {
+        "enabled": health["enabled"], "reason": reason,
+        "reading_revision": self._reading_revision,
+      }
 
   def expect_active(self, *, startup_since=None):
     """Spend at most one opening grace per real observation, never per poll/resume."""

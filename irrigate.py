@@ -59,6 +59,7 @@ class Irrigate:
     self._scheduled = {}
     self._baseline_date = None
     self._sensor_cursors = {}
+    self._waterflow_reading_revision = 0
     self._mqtt_generation = 0
     self._status = None
     self._tempStatus = {}
@@ -478,13 +479,29 @@ class Irrigate:
     if self.everyXMinutes("checkLeakInterval", 1, False):
       self._check_leak()
 
+  def _monitor_waterflow(self):
+    health = self.controller.get_waterflow_health()
+    source = health.get("source", health)
+    notification = self.waterflow.get_notification_state(startup_since=self._start_mono)
+    subject = "resource:waterflow"
+    if notification["reading_revision"] != self._waterflow_reading_revision:
+      # A genuine observation can arrive and expire between monitoring ticks.
+      self.alerts.clear_alert_state(AlertType.MONITORING_UNAVAILABLE, subject=subject)
+      self._waterflow_reading_revision = notification["reading_revision"]
+    if notification["enabled"]:
+      reason = notification["reason"]
+      if reason is not None:
+        self.alerts.alert(
+          AlertType.MONITORING_UNAVAILABLE, "Monitoring unavailable: waterflow (%s)" % reason,
+          subject=subject, data={"source": "waterflow", "reason": reason},
+        )
+      elif source["available"]:
+        self.alerts.clear_alert_state(AlertType.MONITORING_UNAVAILABLE, subject=subject)
+    return health["enabled"] and not source["available"]
+
   def _monitor_health(self):
-    lost = False
+    lost = self._monitor_waterflow() if self.waterflow else False
     resources = [("sensor", sensor.name, sensor.get_health()) for sensor in self.sensors.values()]
-    if self.waterflow:
-      health = self.controller.get_waterflow_health()
-      source = health["source"] if health["enabled"] else health
-      resources.append(("resource", "waterflow", {"enabled": health["enabled"], **source}))
     if self.cfg.mqttEnabled and not self.offline:
       resources.append(("resource", "mqtt", {"enabled": True, "available": self.mqtt.mqttStarted,
                                   "reason": "MQTT disconnected"}))
